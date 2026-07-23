@@ -1,0 +1,7 @@
+<div class="space-y-4">
+  <div class="grid grid-cols-2 gap-3"><div class="review-metric"><span>事实性表述</span><strong>{{ review.factual_statement_count }}</strong></div><div class="review-metric"><span>带来源段落</span><strong>{{ review.sourced_paragraph_ratio }}%</strong></div></div>
+  <div class="review-group"><h3>无来源强判断</h3>{% if review.unsupported_judgments %}<ul>{% for item in review.unsupported_judgments %}<li>{{ item }}</li>{% endfor %}</ul>{% else %}<p>未发现需要单独标记的强判断。</p>{% endif %}</div>
+  <div class="review-group"><h3>重复句式或连接词</h3>{% if review.repeated_connectors %}<ul>{% for item in review.repeated_connectors %}<li>{{ item }}</li>{% endfor %}</ul>{% else %}<p>未发现重复使用的高频连接词。</p>{% endif %}</div>
+  <div class="review-group"><h3>可能空泛的句子</h3>{% if review.generic_sentences %}<ul>{% for item in review.generic_sentences %}<li>{{ item }}</li>{% endfor %}</ul>{% else %}<p>未发现预设的空泛表达。</p>{% endif %}</div>
+  <div class="review-group"><h3>需人工复核的强结论</h3>{% if review.strong_conclusions %}<ul>{% for item in review.strong_conclusions %}<li>{{ item }}</li>{% endfor %}</ul>{% else %}<p>未发现预设的强结论词。</p>{% endif %}</div>
+</div>

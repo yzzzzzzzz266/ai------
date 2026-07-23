@@ -116,3 +116,34 @@ def test_topic_generation_page_and_background_aggregation(monkeypatch) -> None:
     assert generated_draft_id
     assert "可追溯来源" in generated_content
     assert generated_parameters["audience"] == "开发者"
+
+
+def test_editorial_review_and_rewrite_routes() -> None:
+    with TestClient(app) as client:
+        with SessionLocal() as session:
+            draft = session.query(Draft).first()
+            draft_id = draft.id
+            original_content = draft.content_markdown
+            original_parameters = dict(draft.editor_params_json)
+            draft.content_markdown = "这是一项重大突破。\n\n[测试来源](https://example.com/source)"
+            session.commit()
+
+        review_response = client.get(f"/drafts/{draft_id}/review")
+        rewrite_response = client.post(
+            f"/drafts/{draft_id}/rewrite",
+            data={"rewrite_mode": "更克制"},
+            follow_redirects=False,
+        )
+
+        with SessionLocal() as session:
+            draft = session.get(Draft, draft_id)
+            rewritten_content = draft.content_markdown
+            draft.content_markdown = original_content
+            draft.editor_params_json = original_parameters
+            session.commit()
+
+    assert review_response.status_code == 200
+    assert "无来源强判断" in review_response.text
+    assert rewrite_response.status_code == 303
+    assert "值得关注" in rewritten_content
+    assert "[测试来源](https://example.com/source)" in rewritten_content

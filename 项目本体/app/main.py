@@ -16,6 +16,7 @@ from app.demo_data import seed_demo_data
 from app.models import Draft, SourceItem, Topic, TopicEvidence
 from app.services.collection import collect_sources, latest_collection_runs
 from app.services.drafts import EditorParameters, WRITING_MODES, get_draft_generator
+from app.services.editorial import REWRITE_MODES, review_content, rewrite_content
 from app.services.topics import aggregate_topics
 
 
@@ -244,7 +245,38 @@ def generate_draft(
 @app.get("/drafts/{draft_id}/edit", response_class=HTMLResponse)
 def edit_draft(draft_id: int, request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
     draft = get_draft_or_404(session, draft_id)
-    return templates.TemplateResponse(request, "draft_edit.html", {"draft": draft})
+    return templates.TemplateResponse(
+        request,
+        "draft_edit.html",
+        {"draft": draft, "review": review_content(draft.content_markdown), "rewrite_modes": REWRITE_MODES},
+    )
+
+
+@app.get("/drafts/{draft_id}/review", response_class=HTMLResponse)
+def review_draft(draft_id: int, request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
+    draft = get_draft_or_404(session, draft_id)
+    return templates.TemplateResponse(
+        request,
+        "partials/editorial_review.html",
+        {"review": review_content(draft.content_markdown)},
+    )
+
+
+@app.post("/drafts/{draft_id}/rewrite")
+def rewrite_draft(
+    draft_id: int,
+    rewrite_mode: str = Form(),
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    draft = get_draft_or_404(session, draft_id)
+    try:
+        draft.content_markdown = rewrite_content(draft.content_markdown, rewrite_mode)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    draft.updated_at = datetime.now(timezone.utc)
+    draft.editor_params_json = {**draft.editor_params_json, "last_rewrite_mode": rewrite_mode}
+    session.commit()
+    return RedirectResponse(url=f"/drafts/{draft.id}/edit", status_code=303)
 
 
 @app.post("/drafts/{draft_id}", response_class=HTMLResponse)

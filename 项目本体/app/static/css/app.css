@@ -24,3 +24,10 @@ body { font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; }
 .status-success { background: rgba(52, 211, 153, .12); color: rgb(167 243 208); }
 .status-failed { background: rgba(251, 113, 133, .12); color: rgb(254 205 211); }
 .status-running { background: rgba(34, 211, 238, .12); color: rgb(103 232 249); }
+.review-metric { border: 1px solid rgb(51 65 85); border-radius: .75rem; background: rgba(15, 23, 42, .55); padding: .75rem; }
+.review-metric span { display: block; color: rgb(148 163 184); font-size: .75rem; }
+.review-metric strong { display: block; color: rgb(207 250 254); font-size: 1.45rem; margin-top: .25rem; }
+.review-group { border-top: 1px solid rgb(30 41 59); padding-top: .85rem; }
+.review-group h3 { color: rgb(226 232 240); font-size: .82rem; font-weight: 700; }
+.review-group p, .review-group li { color: rgb(148 163 184); font-size: .8rem; line-height: 1.45; margin-top: .35rem; }
+.review-group ul { list-style: disc; margin-left: 1.1rem; }
