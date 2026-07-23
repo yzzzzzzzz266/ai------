@@ -22,6 +22,6 @@
       {% endfor %}
     </div>
   </div>
-  <aside class="h-fit rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><h2 class="font-semibold text-white">内容草稿</h2><p class="mt-2 text-sm leading-6 text-slate-400">阶段二支持编辑、保存和 Markdown 导出。文章生成将在后续阶段接入。</p><div class="mt-5 space-y-3">{% for draft in topic.drafts %}<a class="action-button block text-center" href="/drafts/{{ draft.id }}/edit">编辑「{{ draft.mode }}」草稿</a>{% else %}<form action="/topics/{{ topic.id }}/drafts" method="post"><button class="action-button w-full" type="submit">新建编辑草稿</button></form>{% endfor %}</div></aside>
+  <aside class="h-fit rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><h2 class="font-semibold text-white">内容草稿</h2><p class="mt-2 text-sm leading-6 text-slate-400">基于当前来源证据生成草稿；未配置模型服务时使用本地证据模板。</p><div class="mt-5 space-y-3"><a class="action-button block text-center" href="/topics/{{ topic.id }}/drafts/generate">生成证据草稿</a>{% for draft in topic.drafts %}<a class="secondary-button block text-center" href="/drafts/{{ draft.id }}/edit">编辑「{{ draft.mode }}」草稿</a>{% endfor %}</div></aside>
 </section>
 {% endblock %}

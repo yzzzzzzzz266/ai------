@@ -24,7 +24,7 @@
 <section class="mt-10">
   <div class="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
     <div><h2 class="text-xl font-semibold text-white">热点话题</h2><p class="mt-1 text-sm text-slate-400">当前为演示数据；真实采集与定时任务将在后续阶段接入。</p></div>
-    <div class="flex flex-wrap items-center gap-3"><span class="status-muted">公开数据源已接入</span><button class="action-button" type="button" hx-post="/collection/run" hx-target="#collection-feedback" hx-swap="innerHTML" hx-indicator="#collection-indicator" hx-disabled-elt="this">立即采集</button></div>
+    <div class="flex flex-wrap items-center gap-3"><span class="status-muted">公开数据源已接入</span><button class="secondary-button" type="button" hx-post="/topics/aggregate" hx-target="#collection-feedback" hx-swap="innerHTML" hx-indicator="#collection-indicator" hx-disabled-elt="this">生成热点</button><button class="action-button" type="button" hx-post="/collection/run" hx-target="#collection-feedback" hx-swap="innerHTML" hx-indicator="#collection-indicator" hx-disabled-elt="this">立即采集</button></div>
   </div>
   <form class="mb-4 rounded-xl border border-slate-800 bg-slate-900/60 p-4" hx-get="/topics/fragment" hx-target="#topic-list" hx-indicator="#filter-indicator">
     <label class="mb-2 block text-sm font-medium text-slate-200" for="keyword">关注关键词</label>

@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     comfyui_url: str | None = None
     collection_interval_minutes: int = 60
     scheduler_enabled: bool = True
+    draft_generator_provider: str = "template"
 
     model_config = SettingsConfigDict(
         env_file=PROJECT_DIR / ".env",

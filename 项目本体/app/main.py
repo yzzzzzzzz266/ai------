@@ -15,6 +15,8 @@ from app.database import SessionLocal, get_session, initialize_database
 from app.demo_data import seed_demo_data
 from app.models import Draft, SourceItem, Topic, TopicEvidence
 from app.services.collection import collect_sources, latest_collection_runs
+from app.services.drafts import EditorParameters, WRITING_MODES, get_draft_generator
+from app.services.topics import aggregate_topics
 
 
 settings = get_settings()
@@ -88,6 +90,11 @@ def get_draft_or_404(session: Session, draft_id: int) -> Draft:
     return draft
 
 
+def run_topic_aggregation() -> None:
+    with SessionLocal() as session:
+        aggregate_topics(session)
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
@@ -122,6 +129,16 @@ def start_collection(background_tasks: BackgroundTasks, request: Request) -> HTM
         request,
         "partials/collection_feedback.html",
         {"success": True, "message": "采集任务已开始，状态面板会自动更新。"},
+    )
+
+
+@app.post("/topics/aggregate", response_class=HTMLResponse)
+def start_topic_aggregation(background_tasks: BackgroundTasks, request: Request) -> HTMLResponse:
+    background_tasks.add_task(run_topic_aggregation)
+    return templates.TemplateResponse(
+        request,
+        "partials/collection_feedback.html",
+        {"success": True, "message": "热点聚合任务已开始，完成后刷新话题列表即可查看结果。"},
     )
 
 
@@ -173,6 +190,57 @@ def create_draft(topic_id: int, session: Session = Depends(get_session)) -> Redi
     return RedirectResponse(url=f"/drafts/{draft.id}/edit", status_code=303)
 
 
+@app.get("/topics/{topic_id}/drafts/generate", response_class=HTMLResponse)
+def generate_draft_form(topic_id: int, request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
+    topic = get_topic_or_404(session, topic_id)
+    return templates.TemplateResponse(
+        request,
+        "draft_generate.html",
+        {"topic": topic, "writing_modes": WRITING_MODES},
+    )
+
+
+@app.post("/topics/{topic_id}/drafts/generate")
+def generate_draft(
+    topic_id: int,
+    mode: str = Form("新闻快讯"),
+    audience: str = Form("普通读者"),
+    writing_style: str = Form("新闻"),
+    stance: str = Form("只陈述事实"),
+    target_length: str = Form("自动"),
+    banned_words: str = Form(""),
+    required_facts: str = Form(""),
+    avoided_angles: str = Form(""),
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    topic = get_topic_or_404(session, topic_id)
+    selected_mode = mode if mode in WRITING_MODES else WRITING_MODES[0]
+    parameters = EditorParameters(
+        audience=audience,
+        writing_style=writing_style,
+        stance=stance,
+        target_length=target_length,
+        banned_words=banned_words,
+        required_facts=required_facts,
+        avoided_angles=avoided_angles,
+    )
+    generated = get_draft_generator().generate(topic, parameters, selected_mode)
+    now = datetime.now(timezone.utc)
+    draft = Draft(
+        topic_id=topic.id,
+        mode=selected_mode,
+        title=generated.title,
+        content_markdown=generated.content_markdown,
+        image_prompt=generated.image_prompt,
+        editor_params_json={**parameters.as_dict(), "provider": generated.provider_name},
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(draft)
+    session.commit()
+    return RedirectResponse(url=f"/drafts/{draft.id}/edit", status_code=303)
+
+
 @app.get("/drafts/{draft_id}/edit", response_class=HTMLResponse)
 def edit_draft(draft_id: int, request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
     draft = get_draft_or_404(session, draft_id)
@@ -187,6 +255,13 @@ def save_draft(
     content_markdown: str = Form(),
     mode: str = Form(),
     image_prompt: str = Form(),
+    audience: str = Form("普通读者"),
+    writing_style: str = Form("新闻"),
+    stance: str = Form("只陈述事实"),
+    target_length: str = Form("自动"),
+    banned_words: str = Form(""),
+    required_facts: str = Form(""),
+    avoided_angles: str = Form(""),
     session: Session = Depends(get_session),
 ) -> Response:
     draft = get_draft_or_404(session, draft_id)
@@ -202,6 +277,16 @@ def save_draft(
     draft.content_markdown = content_markdown.strip()
     draft.mode = mode
     draft.image_prompt = image_prompt.strip()
+    draft.editor_params_json = {
+        "audience": audience,
+        "writing_style": writing_style,
+        "stance": stance,
+        "target_length": target_length,
+        "banned_words": banned_words,
+        "required_facts": required_facts,
+        "avoided_angles": avoided_angles,
+        "provider": draft.editor_params_json.get("provider", "manual-edit"),
+    }
     draft.updated_at = datetime.now(timezone.utc)
     session.commit()
 

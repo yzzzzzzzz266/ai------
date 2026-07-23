@@ -71,3 +71,48 @@ def test_manual_collection_endpoint_returns_immediately(monkeypatch) -> None:
     assert "采集任务已开始" in response.text
     assert status_response.status_code == 200
     assert calls
+
+
+def test_topic_generation_page_and_background_aggregation(monkeypatch) -> None:
+    aggregation_calls: list[bool] = []
+    monkeypatch.setattr(main_module, "run_topic_aggregation", lambda: aggregation_calls.append(True))
+
+    with TestClient(app) as client:
+        with SessionLocal() as session:
+            topic = session.query(Topic).first()
+            topic_id = topic.id
+
+        generation_page = client.get(f"/topics/{topic_id}/drafts/generate")
+        aggregation_response = client.post("/topics/aggregate")
+        generation_response = client.post(
+            f"/topics/{topic_id}/drafts/generate",
+            data={
+                "mode": "技术拆解",
+                "audience": "开发者",
+                "writing_style": "技术说明",
+                "stance": "谨慎分析",
+                "target_length": "1,000–1,500 字",
+                "banned_words": "爆发",
+                "required_facts": "AI",
+                "avoided_angles": "不做投资建议",
+            },
+            follow_redirects=False,
+        )
+
+        with SessionLocal() as session:
+            generated_draft = session.query(Draft).order_by(Draft.id.desc()).first()
+            generated_draft_id = generated_draft.id
+            generated_content = generated_draft.content_markdown
+            generated_parameters = generated_draft.editor_params_json
+            session.delete(generated_draft)
+            session.commit()
+
+    assert generation_page.status_code == 200
+    assert "生成可编辑草稿" in generation_page.text
+    assert aggregation_response.status_code == 200
+    assert "热点聚合任务已开始" in aggregation_response.text
+    assert aggregation_calls
+    assert generation_response.status_code == 303
+    assert generated_draft_id
+    assert "可追溯来源" in generated_content
+    assert generated_parameters["audience"] == "开发者"
