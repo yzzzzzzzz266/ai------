@@ -5,7 +5,9 @@ description = "面向 AI 内容创作者的热点信息聚合 MVP"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "apscheduler>=3.10,<4.0",
     "fastapi>=0.115,<1.0",
+    "httpx>=0.28,<1.0",
     "jinja2>=3.1,<4.0",
     "pydantic-settings>=2.6,<3.0",
     "python-multipart>=0.0.18,<1.0",

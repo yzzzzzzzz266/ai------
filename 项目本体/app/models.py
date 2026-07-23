@@ -72,3 +72,16 @@ class Draft(Base):
 
     topic: Mapped[Topic] = relationship(back_populates="drafts")
 
+
+class CollectionRun(Base):
+    __tablename__ = "collection_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_name: Mapped[str] = mapped_column(String(80), index=True)
+    status: Mapped[str] = mapped_column(String(30), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    added_count: Mapped[int] = mapped_column(Integer, default=0)
+    duplicate_count: Mapped[int] = mapped_column(Integer, default=0)
+    filtered_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

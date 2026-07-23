@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     github_token: str | None = None
     x_bearer_token: str | None = None
     comfyui_url: str | None = None
+    collection_interval_minutes: int = 60
+    scheduler_enabled: bool = True
 
     model_config = SettingsConfigDict(
         env_file=PROJECT_DIR / ".env",
@@ -26,4 +28,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

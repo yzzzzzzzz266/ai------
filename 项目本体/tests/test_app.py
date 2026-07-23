@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.database import SessionLocal
+from app import main as main_module
 from app.main import app
 from app.models import Draft, Topic
 
@@ -52,3 +53,21 @@ def test_topic_detail_draft_save_and_markdown_export() -> None:
             draft.title = original_title
             draft.content_markdown = original_content
             session.commit()
+
+
+def test_manual_collection_endpoint_returns_immediately(monkeypatch) -> None:
+    calls: list[object] = []
+
+    def fake_collect(*args: object) -> None:
+        calls.append(args)
+
+    monkeypatch.setattr(main_module, "collect_sources", fake_collect)
+
+    with TestClient(app) as client:
+        response = client.post("/collection/run")
+        status_response = client.get("/collection/status")
+
+    assert response.status_code == 200
+    assert "采集任务已开始" in response.text
+    assert status_response.status_code == 200
+    assert calls

@@ -2,7 +2,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from apscheduler.schedulers.background import BackgroundScheduler
+from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -13,6 +14,7 @@ from app.config import PROJECT_DIR, get_settings
 from app.database import SessionLocal, get_session, initialize_database
 from app.demo_data import seed_demo_data
 from app.models import Draft, SourceItem, Topic, TopicEvidence
+from app.services.collection import collect_sources, latest_collection_runs
 
 
 settings = get_settings()
@@ -26,7 +28,23 @@ async def lifespan(_: FastAPI):
     if settings.demo_mode:
         with SessionLocal() as session:
             seed_demo_data(session)
-    yield
+    scheduler: BackgroundScheduler | None = None
+    if settings.scheduler_enabled:
+        scheduler = BackgroundScheduler(timezone="UTC")
+        scheduler.add_job(
+            collect_sources,
+            "interval",
+            args=[SessionLocal, settings],
+            minutes=max(1, settings.collection_interval_minutes),
+            id="collect-public-sources",
+            replace_existing=True,
+        )
+        scheduler.start()
+    try:
+        yield
+    finally:
+        if scheduler and scheduler.running:
+            scheduler.shutdown(wait=False)
 
 
 app = FastAPI(title="AI Radar", lifespan=lifespan)
@@ -78,6 +96,7 @@ def dashboard(request: Request, session: Session = Depends(get_session)) -> HTML
     draft_count = session.scalar(select(func.count(Draft.id))) or 0
     topics = session.scalars(topic_query(DEFAULT_KEYWORDS)).all()
     platforms = session.scalars(select(SourceItem.platform).distinct().order_by(SourceItem.platform)).all()
+    collection_runs = latest_collection_runs(session)
 
     return templates.TemplateResponse(
         request,
@@ -88,10 +107,30 @@ def dashboard(request: Request, session: Session = Depends(get_session)) -> HTML
             "draft_count": draft_count,
             "source_count": len(platforms),
             "platforms": platforms,
+            "collection_runs": collection_runs,
             "topics": topics,
             "demo_mode": settings.demo_mode,
             "default_keywords": DEFAULT_KEYWORDS,
         },
+    )
+
+
+@app.post("/collection/run", response_class=HTMLResponse)
+def start_collection(background_tasks: BackgroundTasks, request: Request) -> HTMLResponse:
+    background_tasks.add_task(collect_sources, SessionLocal, settings)
+    return templates.TemplateResponse(
+        request,
+        "partials/collection_feedback.html",
+        {"success": True, "message": "采集任务已开始，状态面板会自动更新。"},
+    )
+
+
+@app.get("/collection/status", response_class=HTMLResponse)
+def collection_status(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "partials/collection_status.html",
+        {"collection_runs": latest_collection_runs(session)},
     )
 
 

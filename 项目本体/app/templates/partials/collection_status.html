@@ -1,0 +1,9 @@
+{% if collection_runs %}
+<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+  {% for run in collection_runs %}
+  <article class="rounded-xl border border-slate-800 bg-slate-950/40 p-4"><div class="flex items-center justify-between gap-2"><h4 class="font-medium text-slate-100">{{ run.source_name }}</h4><span class="{% if run.status == 'success' %}status-success{% elif run.status == 'failed' %}status-failed{% else %}status-running{% endif %}">{{ run.status }}</span></div>{% if run.status == 'success' %}<p class="mt-3 text-sm text-slate-400">新增 {{ run.added_count }} · 去重 {{ run.duplicate_count }} · 过滤 {{ run.filtered_count }}</p>{% elif run.status == 'failed' %}<p class="mt-3 line-clamp-2 text-sm text-rose-200">{{ run.error_message or '采集失败，请稍后重试。' }}</p>{% else %}<p class="mt-3 text-sm text-slate-400">任务正在执行，请稍候。</p>{% endif %}<p class="mt-3 text-xs text-slate-500">{{ run.started_at.strftime('%Y-%m-%d %H:%M') }}</p></article>
+  {% endfor %}
+</div>
+{% else %}
+<div class="rounded-xl border border-dashed border-slate-700 p-6 text-center"><p class="text-sm text-slate-300">尚未运行真实采集任务。</p><p class="mt-1 text-xs text-slate-500">点击“立即采集”后将依次尝试公开数据源。</p></div>
+{% endif %}
