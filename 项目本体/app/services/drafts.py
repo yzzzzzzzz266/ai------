@@ -48,7 +48,7 @@ class DraftGenerator(Protocol):
 
 def _source_label(item: SourceItem) -> str:
     date_label = item.published_at.strftime("%Y-%m-%d")
-    return f"[{item.platform}：{item.title}]({item.url})（{item.author or '来源未提供作者'}，{date_label}）"
+    return f"[公开采集 · {item.platform}：{item.title}]({item.url})（{item.author or '来源未提供作者'}，{date_label}）"
 
 
 def _evidence(topic: Topic) -> list[SourceItem]:

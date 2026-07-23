@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+
+{% block title %}{{ task_label }} · AI Radar{% endblock %}
+
+{% block content %}
+<a class="back-link" href="{% if artifact.topic_id %}/topics/{{ artifact.topic_id }}/ai-workspace{% else %}/{% endif %}">← 返回</a>
+<header class="mt-5 mb-7"><p class="text-sm text-cyan-300">{{ task_label }} · {{ artifact.provider_name }}</p><h1 class="mt-2 text-3xl font-bold text-white">{{ artifact.title }}</h1><p class="mt-2 text-sm text-slate-500">生成时间：{{ artifact.created_at.strftime('%Y-%m-%d %H:%M') }}</p></header>
+<article class="markdown-content rounded-2xl border border-slate-800 bg-slate-900/60 p-6 whitespace-pre-wrap text-slate-200">{{ artifact.content_markdown }}</article>
+{% endblock %}

@@ -31,3 +31,7 @@ body { font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; }
 .review-group h3 { color: rgb(226 232 240); font-size: .82rem; font-weight: 700; }
 .review-group p, .review-group li { color: rgb(148 163 184); font-size: .8rem; line-height: 1.45; margin-top: .35rem; }
 .review-group ul { list-style: disc; margin-left: 1.1rem; }
+.workspace-card { border: 1px solid rgb(51 65 85); border-radius: 1rem; background: rgba(15, 23, 42, .72); padding: 1.4rem; }
+.workspace-card h2 { color: white; font-size: 1.1rem; font-weight: 700; }
+.workspace-card p { color: rgb(148 163 184); line-height: 1.6; margin-top: .6rem; }
+.markdown-content { line-height: 1.8; }

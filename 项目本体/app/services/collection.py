@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import xml.etree.ElementTree as ElementTree
 from dataclasses import dataclass
@@ -33,8 +34,30 @@ AI_KEYWORDS = (
     "多模态",
     "开源模型",
 )
+FRONTIER_SIGNAL_KEYWORDS = (
+    "model release",
+    "release",
+    "benchmark",
+    "reasoning",
+    "agent",
+    "multimodal",
+    "open source",
+    "api",
+    "paper",
+    "arxiv",
+    "inference",
+    "training",
+    "模型发布",
+    "评测",
+    "推理",
+    "智能体",
+    "多模态",
+    "开源",
+    "论文",
+    "接口",
+)
 REQUEST_TIMEOUT_SECONDS = 15.0
-USER_AGENT = "AI-Radar-MVP/0.1 (+local-demo)"
+USER_AGENT = "AI-Radar-MVP/0.2"
 
 
 @dataclass(frozen=True)
@@ -83,6 +106,17 @@ def parse_datetime(value: str | None) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def parse_unix_timestamp(value: Any) -> datetime:
+    try:
+        return datetime.fromtimestamp(float(value), tz=timezone.utc)
+    except (TypeError, ValueError, OSError):
+        return utc_now()
+
+
+def configured_values(value: str) -> list[str]:
+    return [entry.strip().lstrip("@") for entry in re.split(r"[\n,]", value) if entry.strip()]
+
+
 def strip_markup(value: str) -> str:
     normalized = re.sub(r"<[^>]+>", " ", value or "")
     return re.sub(r"\s+", " ", normalized).strip()
@@ -94,7 +128,9 @@ def detect_language(value: str) -> str:
 
 def is_ai_related(item: SourceItemPayload) -> bool:
     searchable = f"{item.title} {item.content}".casefold()
-    return any(keyword in searchable for keyword in AI_KEYWORDS)
+    return any(keyword in searchable for keyword in AI_KEYWORDS) and any(
+        keyword in searchable for keyword in FRONTIER_SIGNAL_KEYWORDS
+    )
 
 
 def normalized_external_id(item: SourceItemPayload) -> str:
@@ -308,11 +344,126 @@ class RssAdapter:
         )
 
 
+class XAdapter:
+    name = "X"
+
+    def __init__(self, bearer_token: str, usernames: list[str]) -> None:
+        self.bearer_token = bearer_token
+        self.usernames = usernames
+
+    def fetch(self, client: httpx.Client) -> list[SourceItemPayload]:
+        headers = {"Authorization": f"Bearer {self.bearer_token}"}
+        users_response = client.get(
+            "https://api.x.com/2/users/by",
+            params={"usernames": ",".join(self.usernames), "user.fields": "username,name"},
+            headers=headers,
+        )
+        users_response.raise_for_status()
+        items: list[SourceItemPayload] = []
+        for user in users_response.json().get("data", []):
+            user_id = user.get("id")
+            username = user.get("username")
+            if not user_id or not username:
+                continue
+            tweets_response = client.get(
+                f"https://api.x.com/2/users/{user_id}/tweets",
+                params={
+                    "max_results": 10,
+                    "exclude": "replies,retweets",
+                    "tweet.fields": "created_at,public_metrics",
+                },
+                headers=headers,
+            )
+            tweets_response.raise_for_status()
+            for tweet in tweets_response.json().get("data", []):
+                text = (tweet.get("text") or "").strip()
+                tweet_id = str(tweet.get("id") or "")
+                if not text or not tweet_id:
+                    continue
+                items.append(
+                    SourceItemPayload(
+                        platform=self.name,
+                        external_id=tweet_id,
+                        title=text[:180],
+                        content=text,
+                        url=f"https://x.com/{username}/status/{tweet_id}",
+                        author=username,
+                        published_at=parse_datetime(tweet.get("created_at")),
+                        metrics_json=tweet.get("public_metrics") or {},
+                        language=detect_language(text),
+                        raw_json={"user_id": user_id, "username": username, "source": "x-api"},
+                    )
+                )
+        return items
+
+
+class BilibiliAdapter:
+    name = "Bilibili"
+
+    def __init__(self, author_mids: list[str]) -> None:
+        self.author_mids = author_mids
+
+    def fetch(self, client: httpx.Client) -> list[SourceItemPayload]:
+        items: list[SourceItemPayload] = []
+        for mid in self.author_mids:
+            response = client.get(f"https://space.bilibili.com/{mid}/video")
+            response.raise_for_status()
+            match = re.search(r"window\.__INITIAL_STATE__\s*=\s*({.+?})\s*;\s*</script>", response.text, re.DOTALL)
+            if not match:
+                raise RuntimeError(f"Bilibili public page did not expose video data for MID {mid}")
+            state = json.loads(match.group(1))
+            author = str((state.get("card") or {}).get("name") or mid)
+            seen_bvids: set[str] = set()
+            for video in self._video_records(state):
+                bvid = str(video.get("bvid") or "")
+                title = strip_markup(str(video.get("title") or ""))
+                if not bvid or not title or bvid in seen_bvids:
+                    continue
+                seen_bvids.add(bvid)
+                description = strip_markup(str(video.get("description") or ""))
+                stat = video.get("stat") or {}
+                items.append(
+                    SourceItemPayload(
+                        platform=self.name,
+                        external_id=bvid,
+                        title=title,
+                        content=description,
+                        url=f"https://www.bilibili.com/video/{bvid}",
+                        author=author,
+                        published_at=parse_unix_timestamp(video.get("created") or video.get("pubdate")),
+                        metrics_json={
+                            "views": stat.get("view", video.get("play", 0)),
+                            "likes": stat.get("like", 0),
+                            "comments": stat.get("reply", video.get("video_review", 0)),
+                        },
+                        language=detect_language(f"{title} {description}"),
+                        raw_json={"mid": mid, "bvid": bvid, "source": "bilibili-public-space"},
+                    )
+                )
+        return items
+
+    def _video_records(self, value: Any):
+        if isinstance(value, dict):
+            if value.get("bvid") and value.get("title"):
+                yield value
+            for child in value.values():
+                yield from self._video_records(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from self._video_records(child)
+
+
 def build_adapters(settings: Settings) -> list[SourceAdapter]:
-    feed_urls = [url.strip() for url in re.split(r"[\n,]", settings.rss_urls) if url.strip()]
+    feed_urls = configured_values(settings.rss_urls)
     adapters: list[SourceAdapter] = [ArxivAdapter(), GitHubAdapter(settings.github_token), HackerNewsAdapter()]
     if feed_urls:
         adapters.append(RssAdapter(feed_urls))
+    x_usernames = configured_values(settings.x_author_usernames)
+    if settings.x_bearer_token and x_usernames:
+        adapters.append(XAdapter(settings.x_bearer_token, x_usernames))
+    bilibili_mids = configured_values(settings.bilibili_author_mids)
+    if bilibili_mids:
+        adapters.append(BilibiliAdapter(bilibili_mids))
     return adapters
 
 

@@ -7,7 +7,7 @@ from app.config import Settings
 from app.database import Base
 from app.models import CollectionRun, SourceItem
 from app.services import collection
-from app.services.collection import SourceItemPayload, collect_sources, persist_items
+from app.services.collection import SourceItemPayload, build_adapters, collect_sources, persist_items
 
 
 def make_payload(title: str, url: str, external_id: str | None = None) -> SourceItemPayload:
@@ -34,13 +34,34 @@ def test_persist_items_filters_and_deduplicates_url_hash() -> None:
         irrelevant = make_payload("普通体育新闻", "https://example.com/sports")
         irrelevant = SourceItemPayload(**{**irrelevant.__dict__, "content": "无关摘要"})
 
-        first_stats = persist_items(session, [source, irrelevant])
+        generic_ai = SourceItemPayload(
+            **{
+                **make_payload("AI 行业简报", "https://example.com/generic-ai").__dict__,
+                "content": "artificial intelligence 的一般性内容",
+            }
+        )
+        first_stats = persist_items(session, [source, irrelevant, generic_ai])
         second_stats = persist_items(session, [source])
 
         assert first_stats.added_count == 1
-        assert first_stats.filtered_count == 1
+        assert first_stats.filtered_count == 2
         assert second_stats.duplicate_count == 1
         assert session.scalar(select(func.count(SourceItem.id))) == 1
+
+
+def test_authority_source_adapters_are_enabled_only_when_configured() -> None:
+    base_names = [adapter.name for adapter in build_adapters(Settings())]
+    authority_names = [
+        adapter.name
+        for adapter in build_adapters(
+            Settings(x_bearer_token="test-token", x_author_usernames="openai, frontier_lab", bilibili_author_mids="123,456")
+        )
+    ]
+
+    assert "X" not in base_names
+    assert "Bilibili" not in base_names
+    assert "X" in authority_names
+    assert "Bilibili" in authority_names
 
 
 def test_collection_continues_after_source_failure(monkeypatch) -> None:

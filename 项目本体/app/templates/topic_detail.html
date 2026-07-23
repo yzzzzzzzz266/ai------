@@ -11,17 +11,25 @@
   <p class="mt-5 text-sm text-slate-500">最近发布时间：{{ topic.latest_published_at.strftime('%Y-%m-%d %H:%M') }}</p>
 </header>
 
+<section class="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+  <article class="rounded-xl border border-slate-800 bg-slate-900/60 p-4"><p class="text-xs text-slate-500">平台覆盖</p><p class="mt-2 text-sm font-medium text-slate-200">{{ topic_profile.platform_summary or '暂无' }}</p></article>
+  <article class="rounded-xl border border-slate-800 bg-slate-900/60 p-4"><p class="text-xs text-slate-500">权威作者证据</p><p class="mt-2 text-2xl font-semibold text-cyan-300">{{ topic_profile.authoritative_count }}</p></article>
+  <article class="rounded-xl border border-slate-800 bg-slate-900/60 p-4"><p class="text-xs text-slate-500">加权来源数</p><p class="mt-2 text-2xl font-semibold text-cyan-300">{{ '%.2f' | format(topic_profile.weighted_source_count) }}</p></article>
+  <article class="rounded-xl border border-slate-800 bg-slate-900/60 p-4"><p class="text-xs text-slate-500">平均来源权重</p><p class="mt-2 text-2xl font-semibold text-cyan-300">{{ '%.2f' | format(topic_profile.average_source_weight) }}</p></article>
+</section>
+<p class="mt-3 text-xs leading-5 text-slate-500">热度由加权来源数量、最新发布时间和互动数据共同计算；配置为权威作者的来源会在平台基础权重上额外加成。</p>
+
 <section class="mt-8 grid gap-6 lg:grid-cols-[1fr_19rem]">
   <div><h2 class="text-xl font-semibold text-white">来源证据</h2><p class="mt-1 text-sm text-slate-400">只展示可追溯链接与简短摘要，不复制原始图片或视频。</p>
     <div class="mt-4 space-y-4">
       {% for evidence in topic.evidences %}
       {% set item = evidence.source_item %}
-      <article class="rounded-xl border border-slate-800 bg-slate-900/60 p-5"><div class="flex flex-wrap items-center gap-2"><span class="source-chip">{{ item.platform }}</span><span class="text-xs text-slate-500">关联度 {{ '%.0f' | format(evidence.relevance_score * 100) }}%</span></div><h3 class="mt-3 text-base font-semibold text-white">{{ item.title }}</h3><p class="mt-2 text-sm leading-6 text-slate-400">{{ item.content }}</p><dl class="mt-4 grid gap-2 text-xs text-slate-500 sm:grid-cols-3"><div><dt>作者/频道</dt><dd class="mt-1 text-slate-300">{{ item.author or '未提供' }}</dd></div><div><dt>发布时间</dt><dd class="mt-1 text-slate-300">{{ item.published_at.strftime('%Y-%m-%d %H:%M') }}</dd></div><div><dt>抓取时间</dt><dd class="mt-1 text-slate-300">{{ item.fetched_at.strftime('%Y-%m-%d %H:%M') }}</dd></div></dl><a class="external-link" href="{{ item.url }}" target="_blank" rel="noopener noreferrer">打开原始链接 ↗</a></article>
+      <article class="rounded-xl border border-slate-800 bg-slate-900/60 p-5"><div class="flex flex-wrap items-center gap-2"><span class="source-chip">{{ item.platform }}</span><span class="status-success">公开采集</span><span class="text-xs text-slate-500">关联度 {{ '%.0f' | format(evidence.relevance_score * 100) }}%</span></div><h3 class="mt-3 text-base font-semibold text-white">{{ item.title }}</h3><p class="mt-2 text-sm leading-6 text-slate-400">{{ item.content }}</p><dl class="mt-4 grid gap-2 text-xs text-slate-500 sm:grid-cols-3"><div><dt>作者/频道</dt><dd class="mt-1 text-slate-300">{{ item.author or '未提供' }}</dd></div><div><dt>发布时间</dt><dd class="mt-1 text-slate-300">{{ item.published_at.strftime('%Y-%m-%d %H:%M') }}</dd></div><div><dt>抓取时间</dt><dd class="mt-1 text-slate-300">{{ item.fetched_at.strftime('%Y-%m-%d %H:%M') }}</dd></div></dl><div class="mt-4 flex flex-wrap gap-3"><form action="/sources/{{ item.id }}/read" method="post"><button class="secondary-button" type="submit">AI 读新闻</button></form><a class="external-link" href="{{ item.url }}" target="_blank" rel="noopener noreferrer">打开原始链接 ↗</a></div></article>
       {% else %}
       <div class="rounded-xl border border-dashed border-slate-700 p-8 text-center text-slate-400">该话题暂时没有可展示的来源证据。</div>
       {% endfor %}
     </div>
   </div>
-  <aside class="h-fit rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><h2 class="font-semibold text-white">内容草稿</h2><p class="mt-2 text-sm leading-6 text-slate-400">基于当前来源证据生成草稿；未配置模型服务时使用本地证据模板。</p><div class="mt-5 space-y-3"><a class="action-button block text-center" href="/topics/{{ topic.id }}/drafts/generate">生成证据草稿</a>{% for draft in topic.drafts %}<a class="secondary-button block text-center" href="/drafts/{{ draft.id }}/edit">编辑「{{ draft.mode }}」草稿</a>{% endfor %}</div></aside>
+  <aside class="h-fit rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><h2 class="font-semibold text-white">AI 工作台</h2><p class="mt-2 text-sm leading-6 text-slate-400">生成资料包、提炼新闻主旨，或查看基于证据的事实、推断与未知部分。</p><div class="mt-5 space-y-3"><a class="action-button block text-center" href="/topics/{{ topic.id }}/ai-workspace">打开 AI 工作台</a><a class="secondary-button block text-center" href="/topics/{{ topic.id }}/drafts/generate">生成证据草稿</a>{% for draft in topic.drafts %}<a class="secondary-button block text-center" href="/drafts/{{ draft.id }}/edit">编辑「{{ draft.mode }}」草稿</a>{% endfor %}</div></aside>
 </section>
 {% endblock %}

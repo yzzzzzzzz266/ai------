@@ -85,3 +85,21 @@ class CollectionRun(Base):
     duplicate_count: Mapped[int] = mapped_column(Integer, default=0)
     filtered_count: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ResearchArtifact(Base):
+    __tablename__ = "research_artifacts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    topic_id: Mapped[int | None] = mapped_column(ForeignKey("topics.id"), nullable=True, index=True)
+    source_item_id: Mapped[int | None] = mapped_column(ForeignKey("source_items.id"), nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(50), index=True)
+    title: Mapped[str] = mapped_column(String(500))
+    content_markdown: Mapped[str] = mapped_column(Text)
+    provider_name: Mapped[str] = mapped_column(String(120))
+    source_urls_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    topic: Mapped[Topic | None] = relationship()
+    source_item: Mapped[SourceItem | None] = relationship()

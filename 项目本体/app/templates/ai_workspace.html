@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+
+{% block title %}AI 工作台 · AI Radar{% endblock %}
+
+{% block content %}
+<a class="back-link" href="/topics/{{ topic.id }}">← 返回话题详情</a>
+<header class="mt-5 mb-7"><p class="text-sm text-cyan-300">{{ topic.evidences | length }} 条公开来源</p><h1 class="mt-2 text-3xl font-bold text-white">AI 工作台</h1><p class="mt-3 max-w-3xl text-slate-400">围绕「{{ topic.title }}」生成资料包和证据分析。当前 Provider：{{ provider_name }}。</p></header>
+<section class="grid gap-5 md:grid-cols-2"><form class="workspace-card" action="/topics/{{ topic.id }}/ai-workspace" method="post"><input type="hidden" name="task_kind" value="research_pack"><h2>生成资料包</h2><p>整理来源、资料脉络、可继续追问的问题和使用边界。</p><button class="action-button mt-5" type="submit">生成资料包</button></form><form class="workspace-card" action="/topics/{{ topic.id }}/ai-workspace" method="post"><input type="hidden" name="task_kind" value="evidence_analysis"><h2>AI 证据分析</h2><p>输出可确认事实、谨慎推断、未知与风险，不展示模型内部推理链。</p><button class="secondary-button mt-5" type="submit">分析证据</button></form></section>
+<section class="mt-8"><h2 class="text-xl font-semibold text-white">历史资料</h2><div class="mt-4 space-y-3">{% for artifact in artifacts %}<a class="block rounded-xl border border-slate-800 bg-slate-900/60 p-4 transition hover:border-cyan-400" href="/artifacts/{{ artifact.id }}"><div class="flex flex-wrap items-center justify-between gap-2"><strong class="text-slate-100">{{ artifact.title }}</strong><span class="source-chip">{{ artifact.provider_name }}</span></div><p class="mt-2 text-xs text-slate-500">{{ artifact.created_at.strftime('%Y-%m-%d %H:%M') }}</p></a>{% else %}<div class="rounded-xl border border-dashed border-slate-700 p-8 text-center text-slate-400">还没有生成资料。</div>{% endfor %}</div></section>
+{% endblock %}

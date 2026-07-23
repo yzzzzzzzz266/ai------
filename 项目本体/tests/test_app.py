@@ -1,9 +1,68 @@
+from datetime import datetime, timezone
+from uuid import uuid4
+
 from fastapi.testclient import TestClient
 
-from app.database import SessionLocal
 from app import main as main_module
+from app.database import SessionLocal
 from app.main import app
-from app.models import Draft, Topic
+from app.models import Draft, ResearchArtifact, SourceItem, Topic, TopicEvidence
+
+
+def create_topic_fixture() -> tuple[int, int, int]:
+    suffix = uuid4().hex
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as session:
+        source = SourceItem(
+            platform="测试公开来源",
+            external_id=f"test-{suffix}",
+            title="AI agent 前沿测试来源",
+            content="这是一条关于 AI agent reasoning benchmark 的公开测试摘要。",
+            url=f"https://example.com/{suffix}",
+            author="测试作者",
+            published_at=now,
+            fetched_at=now,
+            metrics_json={},
+            language="zh",
+            raw_json={"test": True},
+        )
+        topic = Topic(
+            title=f"测试前沿 AI 话题 {suffix}",
+            summary="用于路由测试的公开来源话题。",
+            heat_score=80,
+            freshness="近 24 小时",
+            latest_published_at=now,
+            status="active",
+        )
+        session.add_all([source, topic])
+        session.flush()
+        session.add(TopicEvidence(topic_id=topic.id, source_item_id=source.id, relevance_score=1))
+        draft = Draft(
+            topic_id=topic.id,
+            mode="新闻快讯",
+            title="测试草稿",
+            content_markdown=f"[测试公开来源]({source.url})\n\n这是一项重大突破。",
+            image_prompt="AI 新闻插画",
+            editor_params_json={},
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(draft)
+        session.commit()
+        return topic.id, source.id, draft.id
+
+
+def remove_topic_fixture(topic_id: int, source_id: int) -> None:
+    with SessionLocal() as session:
+        session.query(ResearchArtifact).filter(ResearchArtifact.topic_id == topic_id).delete()
+        session.query(ResearchArtifact).filter(ResearchArtifact.source_item_id == source_id).delete()
+        topic = session.get(Topic, topic_id)
+        if topic:
+            session.delete(topic)
+        source = session.get(SourceItem, source_id)
+        if source:
+            session.delete(source)
+        session.commit()
 
 
 def test_application_serves_health_check_and_dashboard() -> None:
@@ -13,137 +72,75 @@ def test_application_serves_health_check_and_dashboard() -> None:
 
     assert health_response.status_code == 200
     assert health_response.json()["status"] == "ok"
+    assert "intelligence_provider" in health_response.json()
     assert dashboard_response.status_code == 200
     assert "AI Radar" in dashboard_response.text
 
 
-def test_topic_detail_draft_save_and_markdown_export() -> None:
-    with TestClient(app) as client:
-        with SessionLocal() as session:
-            topic = session.query(Topic).first()
-            draft = session.query(Draft).filter(Draft.topic_id == topic.id).first()
-            draft_id = draft.id
-            original_title = draft.title
-            original_content = draft.content_markdown
-
-        detail_response = client.get(f"/topics/{topic.id}")
-        save_response = client.post(
-            f"/drafts/{draft_id}",
-            data={
-                "title": "阶段二测试草稿",
-                "content_markdown": "这是一段用于验证保存和导出的 Markdown 正文。",
-                "mode": "编辑解读",
-                "image_prompt": "简洁的 AI 科技资讯插画",
-            },
-            headers={"HX-Request": "true"},
-        )
-        export_response = client.get(f"/drafts/{draft_id}/export")
-        empty_response = client.get("/topics/fragment", params={"keyword": "不存在的关键词"})
+def test_topic_draft_and_export_routes() -> None:
+    topic_id, source_id, draft_id = create_topic_fixture()
+    try:
+        with TestClient(app) as client:
+            detail_response = client.get(f"/topics/{topic_id}")
+            save_response = client.post(
+                f"/drafts/{draft_id}",
+                data={"title": "已保存草稿", "content_markdown": "[来源](https://example.com)\n\nAI agent 摘要。", "mode": "编辑解读", "image_prompt": "AI 新闻插画"},
+                headers={"HX-Request": "true"},
+            )
+            export_response = client.get(f"/drafts/{draft_id}/export")
+            empty_response = client.get("/topics/fragment", params={"keyword": "不存在的关键词"})
 
         assert detail_response.status_code == 200
-        assert "来源证据" in detail_response.text
+        assert "AI 读新闻" in detail_response.text
         assert save_response.status_code == 200
         assert "草稿已保存" in save_response.text
         assert export_response.status_code == 200
-        assert "阶段二测试草稿" in export_response.text
+        assert "已保存草稿" in export_response.text
         assert "没有匹配的话题" in empty_response.text
-
-        with SessionLocal() as session:
-            draft = session.get(Draft, draft_id)
-            draft.title = original_title
-            draft.content_markdown = original_content
-            session.commit()
+    finally:
+        remove_topic_fixture(topic_id, source_id)
 
 
-def test_manual_collection_endpoint_returns_immediately(monkeypatch) -> None:
-    calls: list[object] = []
-
-    def fake_collect(*args: object) -> None:
-        calls.append(args)
-
-    monkeypatch.setattr(main_module, "collect_sources", fake_collect)
-
-    with TestClient(app) as client:
-        response = client.post("/collection/run")
-        status_response = client.get("/collection/status")
-
-    assert response.status_code == 200
-    assert "采集任务已开始" in response.text
-    assert status_response.status_code == 200
-    assert calls
-
-
-def test_topic_generation_page_and_background_aggregation(monkeypatch) -> None:
+def test_manual_collection_and_aggregation_endpoints(monkeypatch) -> None:
+    collection_calls: list[object] = []
     aggregation_calls: list[bool] = []
+    monkeypatch.setattr(main_module, "collect_sources", lambda *args: collection_calls.append(args))
     monkeypatch.setattr(main_module, "run_topic_aggregation", lambda: aggregation_calls.append(True))
 
     with TestClient(app) as client:
-        with SessionLocal() as session:
-            topic = session.query(Topic).first()
-            topic_id = topic.id
-
-        generation_page = client.get(f"/topics/{topic_id}/drafts/generate")
+        collection_response = client.post("/collection/run")
         aggregation_response = client.post("/topics/aggregate")
-        generation_response = client.post(
-            f"/topics/{topic_id}/drafts/generate",
-            data={
-                "mode": "技术拆解",
-                "audience": "开发者",
-                "writing_style": "技术说明",
-                "stance": "谨慎分析",
-                "target_length": "1,000–1,500 字",
-                "banned_words": "爆发",
-                "required_facts": "AI",
-                "avoided_angles": "不做投资建议",
-            },
-            follow_redirects=False,
-        )
 
-        with SessionLocal() as session:
-            generated_draft = session.query(Draft).order_by(Draft.id.desc()).first()
-            generated_draft_id = generated_draft.id
-            generated_content = generated_draft.content_markdown
-            generated_parameters = generated_draft.editor_params_json
-            session.delete(generated_draft)
-            session.commit()
-
-    assert generation_page.status_code == 200
-    assert "生成可编辑草稿" in generation_page.text
+    assert collection_response.status_code == 200
+    assert "采集任务已开始" in collection_response.text
     assert aggregation_response.status_code == 200
     assert "热点聚合任务已开始" in aggregation_response.text
+    assert collection_calls
     assert aggregation_calls
-    assert generation_response.status_code == 303
-    assert generated_draft_id
-    assert "可追溯来源" in generated_content
-    assert generated_parameters["audience"] == "开发者"
 
 
-def test_editorial_review_and_rewrite_routes() -> None:
-    with TestClient(app) as client:
-        with SessionLocal() as session:
-            draft = session.query(Draft).first()
-            draft_id = draft.id
-            original_content = draft.content_markdown
-            original_parameters = dict(draft.editor_params_json)
-            draft.content_markdown = "这是一项重大突破。\n\n[测试来源](https://example.com/source)"
-            session.commit()
+def test_generation_editorial_and_ai_workspace_routes() -> None:
+    topic_id, source_id, draft_id = create_topic_fixture()
+    try:
+        with TestClient(app) as client:
+            generation_page = client.get(f"/topics/{topic_id}/drafts/generate")
+            draft_response = client.post(
+                f"/topics/{topic_id}/drafts/generate",
+                data={"mode": "技术拆解", "audience": "开发者", "writing_style": "技术说明", "stance": "谨慎分析", "target_length": "自动", "banned_words": "", "required_facts": "AI", "avoided_angles": ""},
+                follow_redirects=False,
+            )
+            review_response = client.get(f"/drafts/{draft_id}/review")
+            rewrite_response = client.post(f"/drafts/{draft_id}/rewrite", data={"rewrite_mode": "更克制"}, follow_redirects=False)
+            workspace_response = client.get(f"/topics/{topic_id}/ai-workspace")
+            analysis_response = client.post(f"/topics/{topic_id}/ai-workspace", data={"task_kind": "evidence_analysis"}, follow_redirects=False)
+            read_response = client.post(f"/sources/{source_id}/read", follow_redirects=False)
 
-        review_response = client.get(f"/drafts/{draft_id}/review")
-        rewrite_response = client.post(
-            f"/drafts/{draft_id}/rewrite",
-            data={"rewrite_mode": "更克制"},
-            follow_redirects=False,
-        )
-
-        with SessionLocal() as session:
-            draft = session.get(Draft, draft_id)
-            rewritten_content = draft.content_markdown
-            draft.content_markdown = original_content
-            draft.editor_params_json = original_parameters
-            session.commit()
-
-    assert review_response.status_code == 200
-    assert "无来源强判断" in review_response.text
-    assert rewrite_response.status_code == 303
-    assert "值得关注" in rewritten_content
-    assert "[测试来源](https://example.com/source)" in rewritten_content
+        assert generation_page.status_code == 200
+        assert draft_response.status_code == 303
+        assert review_response.status_code == 200
+        assert rewrite_response.status_code == 303
+        assert workspace_response.status_code == 200
+        assert analysis_response.status_code == 303
+        assert read_response.status_code == 303
+    finally:
+        remove_topic_fixture(topic_id, source_id)

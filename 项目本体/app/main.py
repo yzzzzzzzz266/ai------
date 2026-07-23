@@ -12,12 +12,12 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.config import PROJECT_DIR, get_settings
 from app.database import SessionLocal, get_session, initialize_database
-from app.demo_data import seed_demo_data
-from app.models import Draft, SourceItem, Topic, TopicEvidence
+from app.models import Draft, ResearchArtifact, SourceItem, Topic, TopicEvidence
 from app.services.collection import collect_sources, latest_collection_runs
 from app.services.drafts import EditorParameters, WRITING_MODES, get_draft_generator
 from app.services.editorial import REWRITE_MODES, review_content, rewrite_content
-from app.services.topics import aggregate_topics
+from app.services.intelligence import TASK_LABELS, get_intelligence_provider, validate_openai_model_access
+from app.services.topics import aggregate_topics, build_topic_profile
 
 
 settings = get_settings()
@@ -27,10 +27,8 @@ DEFAULT_KEYWORDS = "LLM, agent, reasoning, multimodal, open source, model releas
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    validate_openai_model_access(settings)
     initialize_database()
-    if settings.demo_mode:
-        with SessionLocal() as session:
-            seed_demo_data(session)
     scheduler: BackgroundScheduler | None = None
     if settings.scheduler_enabled:
         scheduler = BackgroundScheduler(timezone="UTC")
@@ -55,8 +53,9 @@ app.mount("/static", StaticFiles(directory=str(PROJECT_DIR / "app" / "static")),
 
 
 @app.get("/health")
-def health_check() -> dict[str, str | bool]:
-    return {"status": "ok", "environment": settings.app_env, "demo_mode": settings.demo_mode}
+def health_check() -> dict[str, str]:
+    provider = get_intelligence_provider(settings)
+    return {"status": "ok", "environment": settings.app_env, "intelligence_provider": provider.name}
 
 
 def topic_query(keyword: str | None = None):
@@ -91,6 +90,20 @@ def get_draft_or_404(session: Session, draft_id: int) -> Draft:
     return draft
 
 
+def get_source_or_404(session: Session, source_id: int) -> SourceItem:
+    source = session.get(SourceItem, source_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="未找到该来源记录")
+    return source
+
+
+def get_artifact_or_404(session: Session, artifact_id: int) -> ResearchArtifact:
+    artifact = session.get(ResearchArtifact, artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="未找到该 AI 资料")
+    return artifact
+
+
 def run_topic_aggregation() -> None:
     with SessionLocal() as session:
         aggregate_topics(session)
@@ -117,7 +130,6 @@ def dashboard(request: Request, session: Session = Depends(get_session)) -> HTML
             "platforms": platforms,
             "collection_runs": collection_runs,
             "topics": topics,
-            "demo_mode": settings.demo_mode,
             "default_keywords": DEFAULT_KEYWORDS,
         },
     )
@@ -169,7 +181,83 @@ def topic_list_fragment(
 @app.get("/topics/{topic_id}", response_class=HTMLResponse)
 def topic_detail(topic_id: int, request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
     topic = get_topic_or_404(session, topic_id)
-    return templates.TemplateResponse(request, "topic_detail.html", {"topic": topic, "demo_mode": settings.demo_mode})
+    topic_profile = build_topic_profile([evidence.source_item for evidence in topic.evidences], settings)
+    return templates.TemplateResponse(request, "topic_detail.html", {"topic": topic, "topic_profile": topic_profile})
+
+
+@app.get("/topics/{topic_id}/ai-workspace", response_class=HTMLResponse)
+def ai_workspace(topic_id: int, request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
+    topic = get_topic_or_404(session, topic_id)
+    artifacts = session.scalars(
+        select(ResearchArtifact)
+        .where(ResearchArtifact.topic_id == topic.id)
+        .order_by(ResearchArtifact.created_at.desc())
+    ).all()
+    return templates.TemplateResponse(
+        request,
+        "ai_workspace.html",
+        {"topic": topic, "artifacts": artifacts, "provider_name": get_intelligence_provider(settings).name},
+    )
+
+
+@app.post("/topics/{topic_id}/ai-workspace")
+def create_topic_artifact(
+    topic_id: int,
+    task_kind: str = Form(),
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    if task_kind not in {"research_pack", "evidence_analysis"}:
+        raise HTTPException(status_code=422, detail="不支持的 AI 任务")
+    topic = get_topic_or_404(session, topic_id)
+    provider = get_intelligence_provider(settings)
+    result = provider.build_research_pack(topic) if task_kind == "research_pack" else provider.analyze_evidence(topic)
+    now = datetime.now(timezone.utc)
+    artifact = ResearchArtifact(
+        topic_id=topic.id,
+        source_item_id=None,
+        kind=task_kind,
+        title=result.title,
+        content_markdown=result.content_markdown,
+        provider_name=result.provider_name,
+        source_urls_json=result.source_urls,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(artifact)
+    session.commit()
+    return RedirectResponse(url=f"/artifacts/{artifact.id}", status_code=303)
+
+
+@app.post("/sources/{source_id}/read")
+def read_source_with_ai(source_id: int, session: Session = Depends(get_session)) -> RedirectResponse:
+    source = get_source_or_404(session, source_id)
+    provider = get_intelligence_provider(settings)
+    result = provider.read_news(source)
+    now = datetime.now(timezone.utc)
+    artifact = ResearchArtifact(
+        topic_id=None,
+        source_item_id=source.id,
+        kind="news_read",
+        title=result.title,
+        content_markdown=result.content_markdown,
+        provider_name=result.provider_name,
+        source_urls_json=result.source_urls,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(artifact)
+    session.commit()
+    return RedirectResponse(url=f"/artifacts/{artifact.id}", status_code=303)
+
+
+@app.get("/artifacts/{artifact_id}", response_class=HTMLResponse)
+def artifact_detail(artifact_id: int, request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
+    artifact = get_artifact_or_404(session, artifact_id)
+    return templates.TemplateResponse(
+        request,
+        "artifact_detail.html",
+        {"artifact": artifact, "task_label": TASK_LABELS.get(artifact.kind, "AI 资料")},
+    )
 
 
 @app.post("/topics/{topic_id}/drafts")
