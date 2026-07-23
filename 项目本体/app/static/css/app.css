@@ -1,0 +1,8 @@
+body { font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; }
+.stat-card { border: 1px solid rgb(30 41 59); border-radius: 1rem; background: rgba(15, 23, 42, .72); padding: 1.25rem; }
+.stat-card p { color: rgb(148 163 184); font-size: .875rem; }
+.stat-card strong { display: block; margin-top: .5rem; color: white; font-size: 2rem; line-height: 1; }
+.stat-card span { display: block; margin-top: .5rem; color: rgb(100 116 139); font-size: .75rem; }
+.topic-row + .topic-row { border-top: 1px solid rgb(30 41 59); }
+.tag { border-radius: 9999px; background: rgba(34, 211, 238, .12); color: rgb(103 232 249); font-size: .75rem; padding: .25rem .55rem; }
+

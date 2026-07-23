@@ -1,0 +1,2 @@
+"""AI Radar application package."""
+
