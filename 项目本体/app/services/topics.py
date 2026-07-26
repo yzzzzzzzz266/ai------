@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
+import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from math import log1p
 
 from sqlalchemy import select
@@ -9,6 +11,9 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.models import SourceItem, Topic, TopicEvidence
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -123,27 +128,92 @@ def calculate_heat_score(items: list[SourceItem], settings: Settings | None = No
     return round(min(100.0, 20.0 + weighted_source_count * 11.0 + freshness_score + engagement_score), 1)
 
 
-def summarize_items(items: list[SourceItem]) -> str:
+def _one_sentence(value: str) -> str:
+    compact_value = re.sub(r"\s+", " ", value).strip().strip("#*- ")
+    if not compact_value:
+        return "当前来源未提供足够信息，暂无法确认该热点的具体进展。"
+    first_sentence = re.split(r"(?<=[。！？!?])", compact_value, maxsplit=1)[0].strip()
+    return first_sentence.rstrip("。！？!?") + "。"
+
+
+def _local_topic_summary(items: list[SourceItem]) -> str:
     ordered_items = sorted(items, key=lambda item: _normalized_time(item.published_at), reverse=True)
-    titles = "；".join(item.title for item in ordered_items[:2])
-    return f"基于 {len(items)} 条可追溯来源聚合：{titles}。"
+    latest_item = ordered_items[0]
+    additional_source_count = max(0, len(ordered_items) - 1)
+    detail = re.sub(r"\s+", " ", latest_item.content).strip()
+    if detail:
+        detail = detail[:180].rstrip("。！？!?")
+        return _one_sentence(
+            f"{latest_item.title}：{detail}；该热点在近七天内汇集了 {len(ordered_items)} 条公开来源"
+        )
+    if additional_source_count:
+        return _one_sentence(
+            f"{latest_item.title}，近七天内另有 {additional_source_count} 条公开来源围绕同一 AI 信号发布更新"
+        )
+    return _one_sentence(f"{latest_item.title}，这是近七天内出现的单一公开 AI 前沿信号")
+
+
+def summarize_items(items: list[SourceItem], settings: Settings) -> str:
+    if not items:
+        return "当前来源未提供足够信息，暂无法确认该热点的具体进展。"
+    if not settings.openai_api_key:
+        return _local_topic_summary(items)
+
+    source_entries = []
+    for item in sorted(items, key=lambda item: _normalized_time(item.published_at), reverse=True)[:8]:
+        content = re.sub(r"\s+", " ", item.content).strip()[:900]
+        source_entries.append(
+            "\n".join(
+                (
+                    f"平台：{item.platform}",
+                    f"标题：{item.title}",
+                    f"作者：{item.author or '未提供'}",
+                    f"发布时间：{_normalized_time(item.published_at).isoformat()}",
+                    f"内容：{content}",
+                )
+            )
+        )
+    source_context = "\n\n".join(source_entries)
+    try:
+        from openai import OpenAI
+
+        response = OpenAI(api_key=settings.openai_api_key).responses.create(
+            model=settings.openai_model,
+            instructions=(
+                "你是严谨的中文 AI 新闻编辑。仅依据给定来源，输出恰好一句 70 到 120 字的中文热点摘要。"
+                "这句话必须说清楚谁或什么发生了什么、关键进展或数据，以及为何值得关注；"
+                "信息不足时明确说明，不能虚构、不能使用标题、列表、Markdown、来源链接或多句话。"
+            ),
+            input="请综合以下近七天来源，写热点摘要：\n\n" + source_context,
+        )
+        return _one_sentence(response.output_text)
+    except Exception:
+        logger.warning("OpenAI topic summary generation failed; using local summary.", exc_info=True)
+        return _local_topic_summary(items)
 
 
 def aggregate_topics(session: Session, settings: Settings | None = None) -> AggregationResult:
     settings = settings or get_settings()
-    items = session.scalars(select(SourceItem).order_by(SourceItem.published_at.desc())).all()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=settings.hot_topic_lookback_days)
+    items = session.scalars(
+        select(SourceItem)
+        .where(SourceItem.published_at >= cutoff)
+        .order_by(SourceItem.published_at.desc())
+    ).all()
     grouped_items: dict[str, list[SourceItem]] = {}
     for item in items:
         grouped_items.setdefault(match_topic_rule(item).title, []).append(item)
 
     evidence_count = 0
+    for topic in session.scalars(select(Topic).where(Topic.status == "active")):
+        topic.status = "archived"
     for title, grouped in grouped_items.items():
         latest_published_at = max(_normalized_time(item.published_at) for item in grouped)
         topic = session.scalar(select(Topic).where(Topic.title == title))
         if topic is None:
             topic = Topic(
                 title=title,
-                summary=summarize_items(grouped),
+                summary=summarize_items(grouped, settings),
                 heat_score=calculate_heat_score(grouped, settings),
                 freshness="近 24 小时" if (datetime.now(timezone.utc) - latest_published_at).total_seconds() < 86400 else "持续关注",
                 latest_published_at=latest_published_at,
@@ -152,7 +222,7 @@ def aggregate_topics(session: Session, settings: Settings | None = None) -> Aggr
             session.add(topic)
             session.flush()
         else:
-            topic.summary = summarize_items(grouped)
+            topic.summary = summarize_items(grouped, settings)
             topic.heat_score = calculate_heat_score(grouped, settings)
             topic.freshness = "近 24 小时" if (datetime.now(timezone.utc) - latest_published_at).total_seconds() < 86400 else "持续关注"
             topic.latest_published_at = latest_published_at
@@ -162,6 +232,10 @@ def aggregate_topics(session: Session, settings: Settings | None = None) -> Aggr
             evidence.source_item_id: evidence
             for evidence in session.scalars(select(TopicEvidence).where(TopicEvidence.topic_id == topic.id)).all()
         }
+        grouped_item_ids = {item.id for item in grouped}
+        for source_item_id, evidence in existing_evidence.items():
+            if source_item_id not in grouped_item_ids:
+                session.delete(evidence)
         for item in grouped:
             relevance_score = source_weight_for_item(item, settings)
             evidence = existing_evidence.get(item.id)

@@ -130,3 +130,32 @@ def test_reaggregation_refreshes_existing_evidence_weights() -> None:
         aggregate_topics(session, Settings(source_weight_arxiv=1.7))
         session.refresh(evidence)
         assert evidence.relevance_score == 1.7
+
+
+def test_aggregation_uses_only_recent_sources_and_archives_stale_topics() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    now = datetime.now(timezone.utc)
+
+    with Session(engine) as session:
+        recent = source_item(
+            "Recent AI reasoning release",
+            "AI reasoning model release",
+            "https://example.com/recent",
+            now,
+        )
+        stale = source_item(
+            "Old AI model release",
+            "AI model release",
+            "https://example.com/stale",
+            now - timedelta(days=8),
+        )
+        session.add_all([recent, stale])
+        session.commit()
+
+        aggregate_topics(session, Settings(hot_topic_lookback_days=7))
+
+        active_topics = session.scalars(select(Topic).where(Topic.status == "active")).all()
+        assert len(active_topics) == 1
+        assert active_topics[0].evidences[0].source_item.url == recent.url
+        assert "Recent AI reasoning release" in active_topics[0].summary

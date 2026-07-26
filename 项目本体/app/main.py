@@ -62,7 +62,7 @@ def topic_query(keyword: str | None = None):
     statement = select(Topic).options(
         selectinload(Topic.evidences).selectinload(TopicEvidence.source_item),
         selectinload(Topic.drafts),
-    )
+    ).where(Topic.status == "active")
     keywords = [item.strip() for item in (keyword or "").replace("，", ",").split(",") if item.strip()]
     if keywords:
         statement = statement.where(

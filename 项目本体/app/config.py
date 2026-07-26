@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     comfyui_url: str | None = None
     collection_interval_minutes: int = 60
     scheduler_enabled: bool = True
+    hot_topic_lookback_days: int = Field(default=7, ge=1, le=30)
     draft_generator_provider: str = "template"
     openai_api_key: str | None = None
     openai_model: str = "gpt-5.6"

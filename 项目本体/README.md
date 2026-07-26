@@ -61,6 +61,7 @@ uv run uvicorn app.main:app --reload --port 8002
 | `GITHUB_TOKEN` | 可选，用于提高 GitHub API 请求额度 |
 | `COLLECTION_INTERVAL_MINUTES` | APScheduler 采集间隔，最小 1 分钟 |
 | `SCHEDULER_ENABLED` | 是否启用定时采集 |
+| `HOT_TOPIC_LOOKBACK_DAYS` | 热点聚合的来源时间范围，默认 7 天 |
 | `OPENAI_API_KEY` | 可选，启用模型驱动 AI 工作台 |
 | `OPENAI_MODEL` | 要使用的模型名称；启动时验证当前 API 项目是否可访问 |
 

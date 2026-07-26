@@ -7,7 +7,7 @@
 <header class="mt-5 rounded-2xl border border-slate-800 bg-slate-900/60 p-6 sm:p-8">
   <div class="mb-4 flex flex-wrap items-center gap-2"><span class="tag">{{ topic.freshness }}</span><span class="source-chip">{{ topic.evidences | length }} 条来源证据</span><span class="source-chip">热度 {{ '%.1f' | format(topic.heat_score) }}</span></div>
   <h1 class="max-w-4xl text-2xl font-bold tracking-tight text-white sm:text-3xl">{{ topic.title }}</h1>
-  <p class="mt-4 max-w-3xl leading-7 text-slate-300">{{ topic.summary }}</p>
+  <p class="mt-4 max-w-3xl leading-7 text-slate-300"><span class="font-medium text-cyan-200">热点一句话：</span>{{ topic.summary }}</p>
   <p class="mt-5 text-sm text-slate-500">最近发布时间：{{ topic.latest_published_at.strftime('%Y-%m-%d %H:%M') }}</p>
 </header>
 
