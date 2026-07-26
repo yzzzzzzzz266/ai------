@@ -17,6 +17,7 @@ from app.services.collection import collect_sources, latest_collection_runs
 from app.services.drafts import EditorParameters, WRITING_MODES, get_draft_generator
 from app.services.editorial import REWRITE_MODES, review_content, rewrite_content
 from app.services.intelligence import TASK_LABELS, get_intelligence_provider, validate_openai_model_access
+from app.services.dashboard import build_category_distribution
 from app.services.topics import aggregate_topics, build_topic_profile
 
 
@@ -113,11 +114,19 @@ def run_topic_aggregation() -> None:
 def dashboard(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
     recent_count = session.scalar(select(func.count(SourceItem.id)).where(SourceItem.fetched_at >= cutoff)) or 0
-    topic_count = session.scalar(select(func.count(Topic.id))) or 0
+    topic_count = session.scalar(select(func.count(Topic.id)).where(Topic.status == "active")) or 0
     draft_count = session.scalar(select(func.count(Draft.id))) or 0
     topics = session.scalars(topic_query(DEFAULT_KEYWORDS)).all()
     platforms = session.scalars(select(SourceItem.platform).distinct().order_by(SourceItem.platform)).all()
     collection_runs = latest_collection_runs(session)
+    chart_cutoff = datetime.now(timezone.utc) - timedelta(days=settings.hot_topic_lookback_days)
+    chart_items = session.scalars(
+        select(SourceItem).where(SourceItem.published_at >= chart_cutoff).order_by(SourceItem.published_at.desc())
+    ).all()
+    category_distribution = build_category_distribution(
+        chart_items,
+        lookback_days=settings.hot_topic_lookback_days,
+    )
 
     return templates.TemplateResponse(
         request,
@@ -131,6 +140,8 @@ def dashboard(request: Request, session: Session = Depends(get_session)) -> HTML
             "collection_runs": collection_runs,
             "topics": topics,
             "default_keywords": DEFAULT_KEYWORDS,
+            "category_distribution": category_distribution,
+            "hot_topic_lookback_days": settings.hot_topic_lookback_days,
         },
     )
 

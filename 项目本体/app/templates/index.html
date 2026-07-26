@@ -19,6 +19,25 @@
   <article class="stat-card"><p>数据源状态</p><strong>{{ source_count }}</strong><span>个公开来源已入库</span></article>
 </section>
 
+<section class="signal-map mt-10" aria-labelledby="signal-map-title">
+  <div class="signal-map-heading">
+    <div>
+      <p class="signal-map-kicker">7-DAY SIGNAL MAP</p>
+      <h2 id="signal-map-title">AI 信号分布</h2>
+      <p>按 AI 模块聚类近 {{ hot_topic_lookback_days }} 天公开来源。悬停查看占比，点击模块展开平台内容概览。</p>
+    </div>
+    <p class="signal-map-total"><strong>{{ category_distribution | sum(attribute='source_count') }}</strong><span>条有效来源</span></p>
+  </div>
+  <div class="signal-map-grid">
+    <div class="signal-chart-shell">
+      <div id="category-chart" class="category-chart" aria-live="polite"></div>
+      <div id="chart-tooltip" class="chart-tooltip" role="status"></div>
+    </div>
+    <section id="category-detail" class="category-detail" aria-live="polite"></section>
+  </div>
+  <script id="category-chart-data" type="application/json">{{ category_distribution | tojson }}</script>
+</section>
+
 <section class="mt-10">
   <div class="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
     <div><h2 class="text-xl font-semibold text-white">前沿 AI 热点</h2><p class="mt-1 text-sm text-slate-400">只保留同时匹配 AI 与模型、推理、智能体、多模态、评测、开源或论文等前沿信号的公开来源。</p></div>
@@ -33,4 +52,81 @@
   <div id="topic-list">{% include "partials/topic_list.html" %}</div>
   <section class="mt-6 rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><div class="flex flex-wrap items-center justify-between gap-3"><div><h3 class="font-semibold text-white">采集状态</h3><p class="mt-1 text-sm text-slate-400">每个来源独立执行；失败不会中断其他来源。</p></div><p id="collection-indicator" class="htmx-indicator text-sm text-cyan-300">正在提交采集任务…</p></div><div id="collection-feedback" class="mt-3" aria-live="polite"></div><div class="mt-4" hx-get="/collection/status" hx-trigger="load, every 8s" hx-swap="innerHTML">{% include "partials/collection_status.html" %}</div></section>
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  const dataNode = document.getElementById("category-chart-data");
+  const chartRoot = document.getElementById("category-chart");
+  const detailRoot = document.getElementById("category-detail");
+  const tooltip = document.getElementById("chart-tooltip");
+  if (!dataNode || !chartRoot || !detailRoot || !tooltip) return;
+
+  const categories = JSON.parse(dataNode.textContent).filter((category) => category.source_count > 0);
+  const colors = ["#38bdf8", "#a78bfa", "#2dd4bf", "#fbbf24", "#fb7185", "#60a5fa"];
+  const escapeHtml = (value) => String(value).replace(/[&<>"]/g, (character) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"})[character]);
+  const polar = (centerX, centerY, radius, angle) => ({ x: centerX + radius * Math.cos(angle), y: centerY + radius * Math.sin(angle) });
+  const slicePath = (startAngle, endAngle) => {
+    const start = polar(160, 160, 122, startAngle);
+    const end = polar(160, 160, 122, endAngle);
+    const largeArc = endAngle - startAngle > Math.PI ? 1 : 0;
+    return `M 160 160 L ${start.x} ${start.y} A 122 122 0 ${largeArc} 1 ${end.x} ${end.y} Z`;
+  };
+  const selectCategory = (category) => {
+    document.querySelectorAll(".radar-slice").forEach((slice) => slice.classList.toggle("is-selected", slice.dataset.categoryId === category.id));
+    const platforms = category.platforms.map((platform) => `
+      <article class="platform-overview">
+        <header><span>${escapeHtml(platform.name)}</span><strong>${platform.source_count} 条</strong></header>
+        <div class="platform-source-list">${platform.sources.map((source) => `
+          <a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer" class="platform-source">
+            <strong>${escapeHtml(source.title)}</strong>
+            <span>${escapeHtml(source.author)} · ${escapeHtml(source.published_at)}</span>
+            <small>${escapeHtml(source.summary)}</small>
+          </a>`).join("")}</div>
+      </article>`).join("");
+    detailRoot.innerHTML = `
+      <div class="category-detail-heading"><span class="category-dot" style="background:${category.color}"></span><div><p>已选模块</p><h3>${escapeHtml(category.name)}</h3></div><strong>${category.percentage}%</strong></div>
+      <p class="category-detail-copy">近 7 天内共 ${category.source_count} 条来源，按平台分组如下；点击来源即可前往相应平台的原始内容。</p>
+      <div class="platform-overview-grid">${platforms}</div>`;
+  };
+
+  if (!categories.length) {
+    chartRoot.innerHTML = '<p class="chart-empty">近 7 天尚无可绘制的 AI 来源；请先执行采集。</p>';
+    detailRoot.innerHTML = '<p class="chart-empty">采集到来源后，这里会按 AI 模块和平台展示资源分布。</p>';
+    return;
+  }
+
+  let angle = -Math.PI / 2;
+  const paths = categories.map((category, index) => {
+    const nextAngle = angle + (category.percentage / 100) * Math.PI * 2;
+    category.color = colors[index % colors.length];
+    const path = `<path class="radar-slice" data-category-id="${category.id}" d="${slicePath(angle, nextAngle)}" fill="${category.color}" tabindex="0" role="button" aria-label="${escapeHtml(category.name)}，${category.percentage}%"></path>`;
+    angle = nextAngle;
+    return path;
+  }).join("");
+  chartRoot.innerHTML = `<svg viewBox="0 0 320 320" role="img" aria-label="近 7 天 AI 模块来源占比图">${paths}<circle cx="160" cy="160" r="72" fill="#0f172a"></circle><text id="chart-center-value" x="160" y="151" text-anchor="middle" fill="#f8fafc" font-size="18" font-weight="700">${categories[0].percentage}%</text><text id="chart-center-label" x="160" y="178" text-anchor="middle" fill="#94a3b8" font-size="11">${escapeHtml(categories[0].name)}</text></svg>`;
+  const updateFocus = (category, event) => {
+    document.getElementById("chart-center-value").textContent = `${category.percentage}%`;
+    document.getElementById("chart-center-label").textContent = category.name;
+    tooltip.innerHTML = `<strong>${escapeHtml(category.name)}</strong><span>${category.percentage}% · ${category.source_count} 条来源</span>`;
+    tooltip.classList.add("is-visible");
+    if (event) {
+      const bounds = chartRoot.getBoundingClientRect();
+      tooltip.style.left = `${event.clientX - bounds.left}px`;
+      tooltip.style.top = `${event.clientY - bounds.top}px`;
+    }
+  };
+  document.querySelectorAll(".radar-slice").forEach((slice) => {
+    const category = categories.find((entry) => entry.id === slice.dataset.categoryId);
+    slice.addEventListener("mouseenter", (event) => updateFocus(category, event));
+    slice.addEventListener("mousemove", (event) => updateFocus(category, event));
+    slice.addEventListener("mouseleave", () => tooltip.classList.remove("is-visible"));
+    slice.addEventListener("focus", () => updateFocus(category));
+    slice.addEventListener("click", () => selectCategory(category));
+    slice.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectCategory(category); } });
+  });
+  selectCategory(categories[0]);
+})();
+</script>
 {% endblock %}
