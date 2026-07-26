@@ -16,7 +16,7 @@ from app.models import Draft, ResearchArtifact, SourceItem, Topic, TopicEvidence
 from app.services.collection import collect_sources, latest_collection_runs
 from app.services.drafts import EditorParameters, WRITING_MODES, get_draft_generator
 from app.services.editorial import REWRITE_MODES, review_content, rewrite_content
-from app.services.intelligence import TASK_LABELS, get_intelligence_provider, validate_openai_model_access
+from app.services.intelligence import TASK_LABELS, get_intelligence_provider, validate_selected_provider_access
 from app.services.dashboard import build_category_distribution
 from app.services.topics import aggregate_topics, build_topic_profile
 
@@ -28,7 +28,7 @@ DEFAULT_KEYWORDS = "LLM, agent, reasoning, multimodal, open source, model releas
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    validate_openai_model_access(settings)
+    validate_selected_provider_access(settings)
     initialize_database()
     scheduler: BackgroundScheduler | None = None
     if settings.scheduler_enabled:

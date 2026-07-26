@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from app.config import Settings
 from app.models import SourceItem, Topic, TopicEvidence
 from app.services import intelligence
-from app.services.intelligence import LocalEvidenceIntelligence, OpenAIModelValidationError, validate_openai_model_access
+from app.services.intelligence import DeepSeekIntelligence, LocalEvidenceIntelligence, OpenAIModelValidationError, get_intelligence_provider, validate_openai_model_access
 
 
 def test_local_evidence_analysis_marks_data_sources_at_the_end() -> None:
@@ -73,3 +73,17 @@ def test_model_validation_reports_model_access_errors(monkeypatch) -> None:
         assert "API 项目" in str(error)
     else:
         raise AssertionError("Expected a model-access validation error")
+
+
+def test_deepseek_provider_is_selected_without_openai_key() -> None:
+    provider = get_intelligence_provider(
+        Settings(
+            ai_provider="deepseek",
+            openai_api_key=None,
+            deepseek_api_key="test-deepseek-key",
+            deepseek_model="deepseek-v4-flash",
+        )
+    )
+
+    assert isinstance(provider, DeepSeekIntelligence)
+    assert provider.name == "DeepSeek · deepseek-v4-flash"

@@ -59,11 +59,14 @@ uv run uvicorn app.main:app --reload --port 8002
 | `DATABASE_URL` | SQLite 数据库地址 |
 | `RSS_URLS` | 一个或多个公开 RSS 地址，逗号或换行分隔 |
 | `GITHUB_TOKEN` | 可选，用于提高 GitHub API 请求额度 |
-| `COLLECTION_INTERVAL_MINUTES` | APScheduler 采集间隔，最小 1 分钟 |
+| `COLLECTION_INTERVAL_MINUTES` | APScheduler 采集间隔，最小 1 分钟；本地预设为 120 分钟 |
 | `SCHEDULER_ENABLED` | 是否启用定时采集 |
 | `HOT_TOPIC_LOOKBACK_DAYS` | 热点聚合的来源时间范围，默认 7 天 |
+| `AI_PROVIDER` | `openai`、`deepseek`、`auto` 或 `local`；默认 `auto` |
 | `OPENAI_API_KEY` | 可选，启用模型驱动 AI 工作台 |
 | `OPENAI_MODEL` | 要使用的模型名称；启动时验证当前 API 项目是否可访问 |
+| `DEEPSEEK_API_KEY` | 可选，启用 DeepSeek 兼容 API |
+| `DEEPSEEK_MODEL` | DeepSeek 模型名称，默认 `deepseek-v4-flash` |
 
 ## 合规边界与限制
 

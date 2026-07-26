@@ -19,8 +19,12 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     hot_topic_lookback_days: int = Field(default=7, ge=1, le=30)
     draft_generator_provider: str = "template"
+    ai_provider: str = "auto"
     openai_api_key: str | None = None
     openai_model: str = "gpt-5.6"
+    deepseek_api_key: str | None = None
+    deepseek_model: str = "deepseek-v4-flash"
+    deepseek_base_url: str = "https://api.deepseek.com"
     source_weight_arxiv: float = Field(default=1.4, ge=0)
     source_weight_github: float = Field(default=1.2, ge=0)
     source_weight_hacker_news: float = Field(default=0.85, ge=0)

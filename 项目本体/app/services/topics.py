@@ -10,6 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
+from app.services.collection import is_ai_related
+from app.services.intelligence import get_intelligence_provider
 from app.models import SourceItem, Topic, TopicEvidence
 
 
@@ -159,36 +161,11 @@ def summarize_items(items: list[SourceItem], settings: Settings) -> str:
     if not settings.openai_api_key:
         return _local_topic_summary(items)
 
-    source_entries = []
-    for item in sorted(items, key=lambda item: _normalized_time(item.published_at), reverse=True)[:8]:
-        content = re.sub(r"\s+", " ", item.content).strip()[:900]
-        source_entries.append(
-            "\n".join(
-                (
-                    f"平台：{item.platform}",
-                    f"标题：{item.title}",
-                    f"作者：{item.author or '未提供'}",
-                    f"发布时间：{_normalized_time(item.published_at).isoformat()}",
-                    f"内容：{content}",
-                )
-            )
-        )
-    source_context = "\n\n".join(source_entries)
     try:
-        from openai import OpenAI
-
-        response = OpenAI(api_key=settings.openai_api_key).responses.create(
-            model=settings.openai_model,
-            instructions=(
-                "你是严谨的中文 AI 新闻编辑。仅依据给定来源，输出恰好一句 70 到 120 字的中文热点摘要。"
-                "这句话必须说清楚谁或什么发生了什么、关键进展或数据，以及为何值得关注；"
-                "信息不足时明确说明，不能虚构、不能使用标题、列表、Markdown、来源链接或多句话。"
-            ),
-            input="请综合以下近七天来源，写热点摘要：\n\n" + source_context,
-        )
-        return _one_sentence(response.output_text)
+        summary = get_intelligence_provider(settings).summarize_topic(items)
+        return _one_sentence(summary) if summary else _local_topic_summary(items)
     except Exception:
-        logger.warning("OpenAI topic summary generation failed; using local summary.", exc_info=True)
+        logger.warning("Model topic summary generation failed; using local summary.", exc_info=True)
         return _local_topic_summary(items)
 
 
@@ -200,6 +177,7 @@ def aggregate_topics(session: Session, settings: Settings | None = None) -> Aggr
         .where(SourceItem.published_at >= cutoff)
         .order_by(SourceItem.published_at.desc())
     ).all()
+    items = [item for item in items if is_ai_related(item)]
     grouped_items: dict[str, list[SourceItem]] = {}
     for item in items:
         grouped_items.setdefault(match_topic_rule(item).title, []).append(item)

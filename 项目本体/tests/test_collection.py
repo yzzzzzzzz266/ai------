@@ -1,5 +1,7 @@
+import xml.etree.ElementTree as ElementTree
 from datetime import datetime, timezone
 
+import httpx
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -7,7 +9,7 @@ from app.config import Settings
 from app.database import Base
 from app.models import CollectionRun, SourceItem
 from app.services import collection
-from app.services.collection import SourceItemPayload, build_adapters, collect_sources, persist_items
+from app.services.collection import RssAdapter, SourceItemPayload, build_adapters, collect_sources, is_ai_related, persist_items
 
 
 def make_payload(title: str, url: str, external_id: str | None = None) -> SourceItemPayload:
@@ -49,6 +51,75 @@ def test_persist_items_filters_and_deduplicates_url_hash() -> None:
         assert session.scalar(select(func.count(SourceItem.id))) == 1
 
 
+def test_persist_items_normalizes_and_deduplicates_urls_within_one_batch() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        original = make_payload("AI agent release", "\nhttps://example.com/agent-release\n", "\nrelease-1\n")
+        duplicate = SourceItemPayload(**{**original.__dict__, "url": "https://example.com/agent-release"})
+
+        stats = persist_items(session, [original, duplicate])
+        saved_item = session.scalar(select(SourceItem))
+
+        assert stats.added_count == 1
+        assert stats.duplicate_count == 1
+        assert saved_item.url == "https://example.com/agent-release"
+        assert saved_item.external_id == "release-1"
+
+
+def test_rss_adapter_strips_whitespace_from_guid_links() -> None:
+    entry = ElementTree.fromstring(
+        "<item><title>AI agent release</title><guid>\nhttps://example.com/rss-agent\n</guid>"
+        "<description>AI agent release details</description><pubDate>Wed, 01 Jan 2025 00:00:00 GMT</pubDate></item>"
+    )
+
+    payload = RssAdapter(["https://example.com/feed.xml"])._payload_from_entry(entry, "https://example.com/feed.xml")
+
+    assert payload is not None
+    assert payload.url == "https://example.com/rss-agent"
+    assert payload.external_id == "https://example.com/rss-agent"
+
+
+def test_rss_adapter_skips_entries_without_a_parseable_publish_time() -> None:
+    entry = ElementTree.fromstring(
+        "<item><title>AI agent release</title><guid>https://example.com/rss-agent</guid>"
+        "<description>AI agent release details</description></item>"
+    )
+
+    payload = RssAdapter(["https://example.com/feed.xml"])._payload_from_entry(entry, "https://example.com/feed.xml")
+
+    assert payload is None
+
+
+def test_ai_keyword_matching_does_not_treat_aiib_or_capital_as_ai_api() -> None:
+    item = SourceItemPayload(
+        **{
+            **make_payload("AIIB loans for capital conversion", "https://example.com/aiib", "aiib-1").__dict__,
+            "content": "The bank announced a capital investment for coal-to-gas conversion.",
+        }
+    )
+
+    assert not is_ai_related(item)
+
+
+def test_persist_items_skips_items_older_than_the_collection_window() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    old_item = SourceItemPayload(
+        **{
+            **make_payload("AI agent release", "https://example.com/old-agent", "old-agent").__dict__,
+            "published_at": datetime.now(timezone.utc).replace(year=2025),
+        }
+    )
+
+    with Session(engine) as session:
+        stats = persist_items(session, [old_item], max_item_age_days=7)
+
+        assert stats.filtered_count == 1
+        assert session.scalar(select(func.count(SourceItem.id))) == 0
+
+
 def test_authority_source_adapters_are_enabled_only_when_configured() -> None:
     base_names = [adapter.name for adapter in build_adapters(Settings())]
     authority_names = [
@@ -62,6 +133,45 @@ def test_authority_source_adapters_are_enabled_only_when_configured() -> None:
     assert "Bilibili" not in base_names
     assert "X" in authority_names
     assert "Bilibili" in authority_names
+
+
+def test_rss_adapter_accepts_comma_and_newline_separated_feeds() -> None:
+    adapters = build_adapters(
+        Settings(
+            rss_urls=(
+                "https://openai.com/news/rss.xml,https://deepmind.google/blog/rss.xml\n"
+                "https://blog.csdn.net/linshantang/rss/list"
+            )
+        )
+    )
+    rss_adapter = next(adapter for adapter in adapters if adapter.name == "RSS")
+
+    assert rss_adapter.feed_urls == [
+        "https://openai.com/news/rss.xml",
+        "https://deepmind.google/blog/rss.xml",
+        "https://blog.csdn.net/linshantang/rss/list",
+    ]
+
+
+def test_rss_adapter_skips_a_failed_feed_and_keeps_other_feed_items() -> None:
+    failed_url = "https://blog.csdn.net/sinat_39620217/rss/list"
+    working_url = "https://example.com/working.xml"
+
+    class FakeClient:
+        def get(self, url: str) -> httpx.Response:
+            request = httpx.Request("GET", url)
+            if url == failed_url:
+                return httpx.Response(521, request=request)
+            return httpx.Response(
+                200,
+                content=b"""<rss><channel><item><guid>working-1</guid><title>AI agent update</title><link>https://example.com/post</link><pubDate>Sat, 25 Jul 2026 10:00:00 +0000</pubDate></item></channel></rss>""",
+                request=request,
+            )
+
+    items = RssAdapter([failed_url, working_url]).fetch(FakeClient())
+
+    assert [item.external_id for item in items] == ["working-1"]
+    assert [item.metrics_json["feed_url"] for item in items] == [working_url]
 
 
 def test_collection_continues_after_source_failure(monkeypatch) -> None:

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.models import SourceItem
+from app.services.collection import is_ai_related
 from app.services.topics import TOPIC_RULES, _normalized_time, match_topic_rule
 
 
@@ -24,7 +25,11 @@ def build_category_distribution(
 ) -> list[dict[str, Any]]:
     reference_time = _normalized_time(now or datetime.now(timezone.utc))
     cutoff = reference_time - timedelta(days=lookback_days)
-    recent_items = [item for item in items if _normalized_time(item.published_at) >= cutoff]
+    recent_items = [
+        item
+        for item in items
+        if _normalized_time(item.published_at) >= cutoff and is_ai_related(item)
+    ]
     categories: dict[str, dict[str, Any]] = {
         rule.title: {
             "id": f"category-{index + 1}",

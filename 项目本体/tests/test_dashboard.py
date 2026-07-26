@@ -27,6 +27,7 @@ def test_category_distribution_uses_recent_sources_and_groups_platforms() -> Non
             source_item("Agent release", "AI agent tool calling workflow", "GitHub", now),
             source_item("Agent benchmark", "AI agent reliability", "arXiv", now - timedelta(days=1)),
             source_item("Vision model", "multimodal vision-language model", "RSS", now - timedelta(days=2)),
+            source_item("AIIB loan", "capital investment for coal-to-gas conversion", "RSS", now - timedelta(days=1)),
             source_item("Old model", "AI model paper", "RSS", now - timedelta(days=8)),
         ],
         lookback_days=7,

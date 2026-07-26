@@ -33,6 +33,8 @@ class IntelligenceProvider(Protocol):
 
     def analyze_evidence(self, topic: Topic) -> IntelligenceResult: ...
 
+    def summarize_topic(self, sources: list[SourceItem]) -> str | None: ...
+
 
 class OpenAIModelValidationError(RuntimeError):
     """Raised when the configured API project cannot access its selected model."""
@@ -48,6 +50,29 @@ def _source_line(item: SourceItem) -> str:
 
 def _topic_items(topic: Topic) -> list[SourceItem]:
     return [evidence.source_item for evidence in sorted(topic.evidences, key=lambda value: value.source_item.published_at, reverse=True)]
+
+
+def _topic_summary_instructions() -> str:
+    return (
+        "你是严谨的中文 AI 新闻编辑。仅依据给定来源，输出恰好一句 70 到 120 字的中文热点摘要。"
+        "这句话必须说清楚谁或什么发生了什么、关键进展或数据，以及为何值得关注；"
+        "信息不足时明确说明，不能虚构、不能使用标题、列表、Markdown、来源链接或多句话。"
+    )
+
+
+def _topic_summary_context(sources: list[SourceItem]) -> str:
+    return "\n\n".join(
+        "\n".join(
+            (
+                f"平台：{item.platform}",
+                f"标题：{item.title}",
+                f"作者：{item.author or '未提供'}",
+                f"发布时间：{item.published_at.isoformat()}",
+                f"内容：{' '.join(item.content.split())[:900]}",
+            )
+        )
+        for item in sorted(sources, key=lambda item: item.published_at, reverse=True)[:8]
+    )
 
 
 class LocalEvidenceIntelligence:
@@ -88,6 +113,9 @@ class LocalEvidenceIntelligence:
         )
         return IntelligenceResult(f"证据分析：{topic.title}", content, self.name, [item.url for item in items])
 
+    def summarize_topic(self, sources: list[SourceItem]) -> None:
+        return None
+
 
 class OpenAIIntelligence:
     def __init__(self, api_key: str, model: str) -> None:
@@ -123,6 +151,61 @@ class OpenAIIntelligence:
     def analyze_evidence(self, topic: Topic) -> IntelligenceResult:
         return self._generate(f"证据分析：{topic.title}", "输出可确认事实、谨慎推断、未知与风险、下一步核验建议。", _topic_items(topic))
 
+    def summarize_topic(self, sources: list[SourceItem]) -> str:
+        response = self.client.responses.create(
+            model=self.model,
+            instructions=_topic_summary_instructions(),
+            input="请综合以下近七天来源，写热点摘要：\n\n" + _topic_summary_context(sources),
+        )
+        return response.output_text.strip()
+
+
+class DeepSeekIntelligence:
+    def __init__(self, api_key: str, model: str, base_url: str) -> None:
+        from openai import OpenAI
+
+        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.model = model
+        self.name = f"DeepSeek · {model}"
+
+    def _generate(self, title: str, task: str, sources: list[SourceItem]) -> IntelligenceResult:
+        source_context = "\n\n".join(
+            f"来源：{item.platform}\n标题：{item.title}\n作者：{item.author or '未提供'}\n时间：{item.published_at.isoformat()}\n链接：{item.url}\n摘要：{item.content}"
+            for item in sources
+        )
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "你是严谨的中文 AI 新闻研究助理。只能使用提供的来源材料；信息不足时明确说明。输出 Markdown，不得虚构数据、采访、测试或来源。",
+                },
+                {"role": "user", "content": f"任务：{task}\n标题：{title}\n\n来源材料：\n{source_context}"},
+            ],
+        )
+        content = response.choices[0].message.content or "现有信息不足以生成有效分析。"
+        source_section = "\n\n## 数据来源\n\n" + "\n".join(_source_line(item) for item in sources)
+        return IntelligenceResult(title, content.strip() + source_section, self.name, [item.url for item in sources])
+
+    def read_news(self, item: SourceItem) -> IntelligenceResult:
+        return self._generate(f"新闻阅读：{item.title}", "提取主要内容、AI 前沿关联、待核验信息。", [item])
+
+    def build_research_pack(self, topic: Topic) -> IntelligenceResult:
+        return self._generate(f"资料包：{topic.title}", "整理资料脉络、核心事实、可继续追问的问题。", _topic_items(topic))
+
+    def analyze_evidence(self, topic: Topic) -> IntelligenceResult:
+        return self._generate(f"证据分析：{topic.title}", "输出可确认事实、谨慎推断、未知与风险、下一步核验建议。", _topic_items(topic))
+
+    def summarize_topic(self, sources: list[SourceItem]) -> str:
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": _topic_summary_instructions()},
+                {"role": "user", "content": "请综合以下近七天来源，写热点摘要：\n\n" + _topic_summary_context(sources)},
+            ],
+        )
+        return (response.choices[0].message.content or "").strip()
+
 
 def validate_openai_model_access(settings: Settings) -> None:
     """Verify the configured model is available before the web service starts."""
@@ -140,7 +223,19 @@ def validate_openai_model_access(settings: Settings) -> None:
         ) from error
 
 
+def validate_selected_provider_access(settings: Settings) -> None:
+    if settings.ai_provider.strip().casefold() == "openai":
+        validate_openai_model_access(settings)
+
+
 def get_intelligence_provider(settings: Settings) -> IntelligenceProvider:
-    if settings.openai_api_key:
+    provider = settings.ai_provider.strip().casefold()
+    if provider == "deepseek" and settings.deepseek_api_key:
+        return DeepSeekIntelligence(settings.deepseek_api_key, settings.deepseek_model, settings.deepseek_base_url)
+    if provider == "openai" and settings.openai_api_key:
         return OpenAIIntelligence(settings.openai_api_key, settings.openai_model)
+    if provider == "auto" and settings.openai_api_key:
+        return OpenAIIntelligence(settings.openai_api_key, settings.openai_model)
+    if provider == "auto" and settings.deepseek_api_key:
+        return DeepSeekIntelligence(settings.deepseek_api_key, settings.deepseek_model, settings.deepseek_base_url)
     return LocalEvidenceIntelligence()

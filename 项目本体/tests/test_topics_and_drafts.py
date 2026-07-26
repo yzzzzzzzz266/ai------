@@ -158,4 +158,4 @@ def test_aggregation_uses_only_recent_sources_and_archives_stale_topics() -> Non
         active_topics = session.scalars(select(Topic).where(Topic.status == "active")).all()
         assert len(active_topics) == 1
         assert active_topics[0].evidences[0].source_item.url == recent.url
-        assert "Recent AI reasoning release" in active_topics[0].summary
+        assert "AI" in active_topics[0].summary

@@ -91,19 +91,23 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def parse_datetime(value: str | None) -> datetime:
+def parse_optional_datetime(value: str | None) -> datetime | None:
     if not value:
-        return utc_now()
+        return None
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         try:
             parsed = parsedate_to_datetime(value)
         except (TypeError, ValueError):
-            return utc_now()
+            return None
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def parse_datetime(value: str | None) -> datetime:
+    return parse_optional_datetime(value) or utc_now()
 
 
 def parse_unix_timestamp(value: Any) -> datetime:
@@ -126,29 +130,52 @@ def detect_language(value: str) -> str:
     return "zh" if re.search(r"[\u4e00-\u9fff]", value) else "en"
 
 
+def _matches_keyword(searchable: str, keyword: str) -> bool:
+    if keyword.isascii():
+        return re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", searchable) is not None
+    return keyword in searchable
+
+
 def is_ai_related(item: SourceItemPayload) -> bool:
     searchable = f"{item.title} {item.content}".casefold()
-    return any(keyword in searchable for keyword in AI_KEYWORDS) and any(
-        keyword in searchable for keyword in FRONTIER_SIGNAL_KEYWORDS
+    return any(_matches_keyword(searchable, keyword) for keyword in AI_KEYWORDS) and any(
+        _matches_keyword(searchable, keyword) for keyword in FRONTIER_SIGNAL_KEYWORDS
     )
 
 
-def normalized_external_id(item: SourceItemPayload) -> str:
-    if item.external_id:
-        return item.external_id[:255]
-    return hashlib.sha256(item.url.encode("utf-8")).hexdigest()
+def normalized_external_id(item: SourceItemPayload, normalized_url: str) -> str:
+    if item.external_id and item.external_id.strip():
+        return item.external_id.strip()[:255]
+    return hashlib.sha256(normalized_url.encode("utf-8")).hexdigest()
 
 
-def persist_items(session: Session, items: list[SourceItemPayload]) -> PersistStats:
+def persist_items(
+    session: Session,
+    items: list[SourceItemPayload],
+    max_item_age_days: int | None = None,
+) -> PersistStats:
     added_count = duplicate_count = filtered_count = 0
     fetched_at = utc_now()
+    cutoff = fetched_at - timedelta(days=max_item_age_days) if max_item_age_days is not None else None
+    batch_external_ids: set[tuple[str, str]] = set()
+    batch_urls: set[str] = set()
 
     for item in items:
-        if not item.title or not item.url or not is_ai_related(item):
+        normalized_url = item.url.strip()
+        if (
+            not item.title
+            or not normalized_url
+            or (cutoff is not None and item.published_at < cutoff)
+            or not is_ai_related(item)
+        ):
             filtered_count += 1
             continue
 
-        external_id = normalized_external_id(item)
+        external_id = normalized_external_id(item, normalized_url)
+        external_key = (item.platform, external_id)
+        if external_key in batch_external_ids or normalized_url in batch_urls:
+            duplicate_count += 1
+            continue
         existing = session.scalar(
             select(SourceItem).where(
                 SourceItem.platform == item.platform,
@@ -156,7 +183,7 @@ def persist_items(session: Session, items: list[SourceItemPayload]) -> PersistSt
             )
         )
         if existing is None:
-            existing = session.scalar(select(SourceItem).where(SourceItem.url == item.url))
+            existing = session.scalar(select(SourceItem).where(SourceItem.url == normalized_url))
         if existing is not None:
             duplicate_count += 1
             continue
@@ -167,7 +194,7 @@ def persist_items(session: Session, items: list[SourceItemPayload]) -> PersistSt
                 external_id=external_id,
                 title=item.title[:500],
                 content=item.content,
-                url=item.url[:1000],
+                url=normalized_url[:1000],
                 author=item.author[:255] if item.author else None,
                 published_at=item.published_at,
                 fetched_at=fetched_at,
@@ -176,6 +203,8 @@ def persist_items(session: Session, items: list[SourceItemPayload]) -> PersistSt
                 raw_json=item.raw_json,
             )
         )
+        batch_external_ids.add(external_key)
+        batch_urls.add(normalized_url)
         added_count += 1
 
     session.commit()
@@ -303,15 +332,19 @@ class RssAdapter:
     def fetch(self, client: httpx.Client) -> list[SourceItemPayload]:
         items: list[SourceItemPayload] = []
         for feed_url in self.feed_urls:
-            response = client.get(feed_url)
-            response.raise_for_status()
-            root = ElementTree.fromstring(response.content)
+            try:
+                response = client.get(feed_url)
+                response.raise_for_status()
+                root = ElementTree.fromstring(response.content)
+            except (httpx.HTTPError, ElementTree.ParseError):
+                continue
             for entry in root.findall(".//item") + root.findall("{http://www.w3.org/2005/Atom}entry"):
                 items.append(self._payload_from_entry(entry, feed_url))
         return [item for item in items if item is not None]
 
     def _payload_from_entry(self, entry: ElementTree.Element, feed_url: str) -> SourceItemPayload | None:
         atom = "{http://www.w3.org/2005/Atom}"
+        dublin_core = "{http://purl.org/dc/elements/1.1/}"
         title = strip_markup(entry.findtext("title") or entry.findtext(f"{atom}title") or "")
         link_element = entry.find("link")
         if link_element is None:
@@ -319,25 +352,31 @@ class RssAdapter:
         url = ""
         if link_element is not None:
             url = link_element.get("href") or (link_element.text or "")
-        url = url or entry.findtext("guid") or feed_url
+        url = (url or entry.findtext("guid") or feed_url).strip()
         content = strip_markup(
             entry.findtext("description")
             or entry.findtext(f"{atom}summary")
             or entry.findtext(f"{atom}content")
             or ""
         )
-        author = entry.findtext("author") or entry.findtext(f"{atom}author/{atom}name")
-        published = entry.findtext("pubDate") or entry.findtext(f"{atom}published") or entry.findtext(f"{atom}updated")
-        if not title:
+        author = strip_markup(entry.findtext("author") or entry.findtext(f"{atom}author/{atom}name") or "") or None
+        published = (
+            entry.findtext("pubDate")
+            or entry.findtext(f"{atom}published")
+            or entry.findtext(f"{atom}updated")
+            or entry.findtext(f"{dublin_core}date")
+        )
+        published_at = parse_optional_datetime(published)
+        if not title or published_at is None:
             return None
         return SourceItemPayload(
             platform=self.name,
-            external_id=entry.findtext("guid") or url,
+            external_id=(entry.findtext("guid") or url).strip(),
             title=title,
             content=content,
             url=url,
             author=author,
-            published_at=parse_datetime(published),
+            published_at=published_at,
             metrics_json={"feed_url": feed_url},
             language=detect_language(f"{title} {content}"),
             raw_json={"feed_url": feed_url},
@@ -475,7 +514,11 @@ def collect_sources(session_factory: sessionmaker[Session], settings: Settings) 
                 session.add(run)
                 session.commit()
                 try:
-                    stats = persist_items(session, adapter.fetch(client))
+                    stats = persist_items(
+                        session,
+                        adapter.fetch(client),
+                        max_item_age_days=settings.hot_topic_lookback_days,
+                    )
                     run.status = "success"
                     run.added_count = stats.added_count
                     run.duplicate_count = stats.duplicate_count
