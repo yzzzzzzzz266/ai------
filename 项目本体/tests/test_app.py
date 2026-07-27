@@ -77,6 +77,9 @@ def test_application_serves_health_check_and_dashboard() -> None:
     assert dashboard_response.status_code == 200
     assert "AI Radar" in dashboard_response.text
     assert 'href="/drafts"' in dashboard_response.text
+    assert 'class="secondary-button hotspot-generate-button"' in dashboard_response.text
+    assert 'class="hotspot-button-loading" role="status"' in dashboard_response.text
+    assert "生成中" in dashboard_response.text
 
 
 def test_topic_draft_and_export_routes() -> None:
@@ -85,6 +88,7 @@ def test_topic_draft_and_export_routes() -> None:
         with TestClient(app) as client:
             detail_response = client.get(f"/topics/{topic_id}")
             drafts_response = client.get("/drafts")
+            edit_response = client.get(f"/drafts/{draft_id}/edit")
             save_response = client.post(
                 f"/drafts/{draft_id}",
                 data={"title": "已保存草稿", "content_markdown": "[来源](https://example.com)\n\nAI agent 摘要。", "mode": "编辑解读", "image_prompt": "AI 新闻插画"},
@@ -95,13 +99,74 @@ def test_topic_draft_and_export_routes() -> None:
 
         assert detail_response.status_code == 200
         assert drafts_response.status_code == 200
+        assert edit_response.status_code == 200
         assert f'/drafts/{draft_id}/edit' in drafts_response.text
+        assert "#AI" in edit_response.text
         assert "AI 读新闻" in detail_response.text
         assert save_response.status_code == 200
         assert "草稿已保存" in save_response.text
         assert export_response.status_code == 200
         assert "已保存草稿" in export_response.text
         assert "没有匹配的话题" in empty_response.text
+    finally:
+        remove_topic_fixture(topic_id, source_id)
+
+
+def test_draft_crud_and_filters() -> None:
+    topic_id, source_id, _ = create_topic_fixture()
+    today = datetime.now(timezone.utc).date().isoformat()
+    try:
+        with TestClient(app) as client:
+            new_page = client.get("/drafts/new")
+            title_results = client.get("/drafts", params={"q": "测试草稿"})
+            browser_form_results = client.get("/drafts", params={"q": "测试草稿", "date_from": "", "date_to": "", "sort": "updated_desc"})
+            content_results = client.get("/drafts", params={"q": "重大突破"})
+            date_results = client.get("/drafts", params={"date_from": today, "date_to": today})
+            invalid_range_results = client.get("/drafts", params={"date_from": "2026-07-28", "date_to": "2026-07-27"})
+            empty_results = client.get("/drafts", params={"q": "肯定不存在的草稿关键词"})
+            create_response = client.post(
+                "/drafts",
+                data={
+                    "topic_id": str(topic_id),
+                    "title": "手动创建的草稿",
+                    "content_markdown": "这是一段可查询的草稿正文。",
+                    "mode": "编辑解读",
+                    "image_prompt": "AI editorial illustration",
+                },
+                follow_redirects=False,
+            )
+            created_id = int(create_response.headers["location"].split("/")[2])
+            detail_response = client.get(f"/drafts/{created_id}")
+            update_response = client.post(
+                f"/drafts/{created_id}",
+                data={
+                    "title": "修改后的草稿标题",
+                    "content_markdown": "修改后的正文内容。",
+                    "mode": "技术拆解",
+                    "image_prompt": "updated prompt",
+                },
+                follow_redirects=False,
+            )
+            updated_results = client.get("/drafts", params={"q": "修改后的正文"})
+            delete_response = client.post(f"/drafts/{created_id}/delete", follow_redirects=False)
+            deleted_response = client.get(f"/drafts/{created_id}")
+
+        assert new_page.status_code == 200
+        assert "新建草稿" in new_page.text
+        assert "测试草稿" in title_results.text
+        assert browser_form_results.status_code == 200
+        assert "测试草稿" in content_results.text
+        assert "测试草稿" in date_results.text
+        assert "更新开始日期不能晚于结束日期" in invalid_range_results.text
+        assert "没有匹配的草稿" in empty_results.text
+        assert create_response.status_code == 303
+        assert detail_response.status_code == 200
+        assert "手动创建的草稿" in detail_response.text
+        assert update_response.status_code == 303
+        assert "修改后的草稿标题" in updated_results.text
+        assert delete_response.status_code == 303
+        assert delete_response.headers["location"] == "/drafts?deleted=1"
+        assert deleted_response.status_code == 404
     finally:
         remove_topic_fixture(topic_id, source_id)
 

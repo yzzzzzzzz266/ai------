@@ -9,7 +9,7 @@ from app.config import Settings
 from app.database import Base
 from app.models import CollectionRun, SourceItem
 from app.services import collection
-from app.services.collection import RssAdapter, SourceItemPayload, build_adapters, collect_sources, is_ai_related, persist_items
+from app.services.collection import ArxivAdapter, RssAdapter, SourceItemPayload, build_adapters, collect_sources, is_ai_related, persist_items
 
 
 def make_payload(title: str, url: str, external_id: str | None = None) -> SourceItemPayload:
@@ -172,6 +172,34 @@ def test_rss_adapter_skips_a_failed_feed_and_keeps_other_feed_items() -> None:
 
     assert [item.external_id for item in items] == ["working-1"]
     assert [item.metrics_json["feed_url"] for item in items] == [working_url]
+
+
+def test_arxiv_adapter_retries_once_after_rate_limit(monkeypatch) -> None:
+    xml = b"""<feed xmlns=\"http://www.w3.org/2005/Atom\"><entry><id>https://arxiv.org/abs/1234.5678</id><title>AI agent benchmark</title><summary>Machine learning research</summary><author><name>Test Author</name></author><published>2026-07-27T00:00:00Z</published></entry></feed>"""
+    responses = [httpx.Response(429, headers={"Retry-After": "0"}), httpx.Response(200, content=xml)]
+
+    class FakeClient:
+        def get(self, _url: str, params: dict[str, str]) -> httpx.Response:
+            response = responses.pop(0)
+            response.request = httpx.Request("GET", "https://export.arxiv.org/api/query", params=params)
+            return response
+
+    delays: list[float] = []
+    clock = [0.0]
+
+    def advance_clock(seconds: float) -> None:
+        delays.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setattr(collection, "_arxiv_last_request_at", -collection.ARXIV_MIN_REQUEST_INTERVAL_SECONDS)
+    monkeypatch.setattr(collection.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(collection.time, "sleep", advance_clock)
+
+    items = ArxivAdapter().fetch(FakeClient())
+
+    assert len(items) == 1
+    assert items[0].external_id == "1234.5678"
+    assert delays == [collection.ARXIV_MIN_REQUEST_INTERVAL_SECONDS]
 
 
 def test_collection_continues_after_source_failure(monkeypatch) -> None:

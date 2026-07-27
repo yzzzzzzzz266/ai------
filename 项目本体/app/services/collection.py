@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
+import time
 import xml.etree.ElementTree as ElementTree
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -58,6 +60,10 @@ FRONTIER_SIGNAL_KEYWORDS = (
 )
 REQUEST_TIMEOUT_SECONDS = 15.0
 USER_AGENT = "AI-Radar-MVP/0.2"
+ARXIV_MIN_REQUEST_INTERVAL_SECONDS = 3.0
+ARXIV_MAX_RETRY_DELAY_SECONDS = 30.0
+_arxiv_request_lock = threading.Lock()
+_arxiv_last_request_at = 0.0
 
 
 @dataclass(frozen=True)
@@ -85,6 +91,10 @@ class SourceAdapter(Protocol):
     name: str
 
     def fetch(self, client: httpx.Client) -> list[SourceItemPayload]: ...
+
+
+class SourceRateLimitedError(RuntimeError):
+    pass
 
 
 def utc_now() -> datetime:
@@ -215,15 +225,7 @@ class ArxivAdapter:
     name = "arXiv"
 
     def fetch(self, client: httpx.Client) -> list[SourceItemPayload]:
-        response = client.get(
-            "https://export.arxiv.org/api/query",
-            params={
-                "search_query": "cat:cs.AI OR cat:cs.CL OR cat:cs.LG",
-                "sortBy": "submittedDate",
-                "sortOrder": "descending",
-                "max_results": 15,
-            },
-        )
+        response = self._request_with_rate_limit(client)
         response.raise_for_status()
         root = ElementTree.fromstring(response.text)
         namespace = {"atom": "http://www.w3.org/2005/Atom"}
@@ -252,6 +254,36 @@ class ArxivAdapter:
                 )
             )
         return items
+
+    def _request_with_rate_limit(self, client: httpx.Client) -> httpx.Response:
+        global _arxiv_last_request_at
+
+        params = {
+            "search_query": "cat:cs.AI OR cat:cs.CL OR cat:cs.LG",
+            "sortBy": "submittedDate",
+            "sortOrder": "descending",
+            "max_results": 15,
+        }
+        with _arxiv_request_lock:
+            for attempt in range(2):
+                elapsed = time.monotonic() - _arxiv_last_request_at
+                if elapsed < ARXIV_MIN_REQUEST_INTERVAL_SECONDS:
+                    time.sleep(ARXIV_MIN_REQUEST_INTERVAL_SECONDS - elapsed)
+
+                response = client.get("https://export.arxiv.org/api/query", params=params)
+                _arxiv_last_request_at = time.monotonic()
+                if response.status_code != 429:
+                    return response
+
+                if attempt == 0:
+                    retry_after = response.headers.get("Retry-After")
+                    try:
+                        delay = float(retry_after) if retry_after else ARXIV_MIN_REQUEST_INTERVAL_SECONDS
+                    except ValueError:
+                        delay = ARXIV_MIN_REQUEST_INTERVAL_SECONDS
+                    time.sleep(min(ARXIV_MAX_RETRY_DELAY_SECONDS, max(ARXIV_MIN_REQUEST_INTERVAL_SECONDS, delay)))
+
+        raise SourceRateLimitedError("arXiv 请求过于频繁，已延迟重试一次；请稍后再试。")
 
 
 class GitHubAdapter:
@@ -526,7 +558,7 @@ def collect_sources(session_factory: sessionmaker[Session], settings: Settings) 
                 except Exception as error:
                     session.rollback()
                     run = session.get(CollectionRun, run.id)
-                    run.status = "failed"
+                    run.status = "rate_limited" if isinstance(error, SourceRateLimitedError) else "failed"
                     run.error_message = str(error)[:1000]
                 run.finished_at = utc_now()
                 session.commit()

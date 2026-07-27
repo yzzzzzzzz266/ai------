@@ -8,31 +8,62 @@
   <div>
     <p class="text-sm font-medium text-cyan-300">CONTENT DRAFTS</p>
     <h1 class="mt-2 text-3xl font-bold text-white">草稿箱</h1>
-    <p class="mt-2 text-slate-400">继续编辑已生成的内容，或回到话题创建新的证据草稿。</p>
+    <p class="mt-2 text-slate-400">查找、查看和维护已生成的内容草稿。</p>
   </div>
-  <a class="secondary-button w-fit" href="/">浏览热点</a>
+  <a class="action-button w-fit" href="/drafts/new">新建草稿</a>
 </header>
+
+{% if deleted %}
+<div class="save-success" role="status">草稿已删除。</div>
+{% endif %}
+
+<form class="mb-5 border-y border-slate-800 py-5" action="/drafts" method="get" aria-label="筛选草稿">
+  <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-12 lg:items-end">
+    <label class="lg:col-span-4"><span class="form-label">题目或正文</span><input class="field" type="search" name="q" value="{{ q }}" placeholder="搜索草稿标题、正文或热点题目"></label>
+    <label class="lg:col-span-2"><span class="form-label">更新开始</span><input class="field" type="date" name="date_from" value="{{ date_from }}"></label>
+    <label class="lg:col-span-2"><span class="form-label">更新结束</span><input class="field" type="date" name="date_to" value="{{ date_to }}"></label>
+    <label class="lg:col-span-2"><span class="form-label">排序</span><select class="field" name="sort"><option value="updated_desc" {% if sort == 'updated_desc' %}selected{% endif %}>最近更新</option><option value="updated_asc" {% if sort == 'updated_asc' %}selected{% endif %}>最早更新</option><option value="created_desc" {% if sort == 'created_desc' %}selected{% endif %}>最近创建</option></select></label>
+    <div class="flex gap-2 lg:col-span-2"><button class="action-button flex-1" type="submit">查询</button>{% if has_filters %}<a class="secondary-button flex-1 text-center" href="/drafts">重置</a>{% endif %}</div>
+  </div>
+</form>
+{% if filter_error %}<div class="save-error" role="alert">{{ filter_error }}</div>{% endif %}
+
+<div class="mb-4 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-400">
+  <p>{% if has_filters %}找到 <strong class="text-slate-100">{{ drafts | length }}</strong> 条草稿{% else %}共 <strong class="text-slate-100">{{ total_draft_count }}</strong> 条草稿{% endif %}</p>
+  <a class="back-link" href="/">从热点生成草稿</a>
+</div>
 
 {% if drafts %}
 <section class="grid gap-4" aria-label="草稿列表">
   {% for draft in drafts %}
   <article class="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
-    <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-      <div class="min-w-0">
+    <div class="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+      <div class="min-w-0 flex-1">
         <div class="flex flex-wrap items-center gap-2"><span class="source-chip">{{ draft.mode }}</span><a class="text-sm text-cyan-300 hover:text-cyan-100" href="/topics/{{ draft.topic_id }}">{{ draft.topic.title }}</a></div>
-        <h2 class="mt-3 text-lg font-semibold text-white">{{ draft.title }}</h2>
-        <p class="mt-2 text-sm text-slate-400">最近更新：{{ draft.updated_at.strftime('%Y-%m-%d %H:%M') }}</p>
+        <a href="/drafts/{{ draft.id }}"><h2 class="mt-3 text-lg font-semibold text-white transition hover:text-cyan-100">{{ draft.title }}</h2></a>
+        <p class="mt-2 line-clamp-2 text-sm leading-6 text-slate-400">{{ draft.content_markdown | striptags | replace('\n', ' ') | truncate(180) }}</p>
+        <p class="mt-3 text-xs text-slate-500">创建 {{ draft.created_at.strftime('%Y-%m-%d %H:%M') }} · 更新 {{ draft.updated_at.strftime('%Y-%m-%d %H:%M') }}</p>
       </div>
-      <a class="action-button shrink-0 text-center" href="/drafts/{{ draft.id }}/edit">继续编辑</a>
+      <div class="flex shrink-0 flex-wrap gap-2">
+        <a class="secondary-button text-center" href="/drafts/{{ draft.id }}">查看</a>
+        <a class="action-button text-center" href="/drafts/{{ draft.id }}/edit">编辑</a>
+        <form action="/drafts/{{ draft.id }}/delete" method="post" onsubmit="return confirm('确定删除这篇草稿吗？删除后无法恢复。')"><button class="danger-button" type="submit">删除</button></form>
+      </div>
     </div>
   </article>
   {% endfor %}
 </section>
+{% elif has_filters %}
+<section class="rounded-xl border border-dashed border-slate-700 bg-slate-900/40 p-8 text-center">
+  <h2 class="text-lg font-semibold text-white">没有匹配的草稿</h2>
+  <p class="mt-2 text-sm text-slate-400">调整题目关键词或更新时间范围后再查询。</p>
+  <a class="secondary-button mt-5 inline-block" href="/drafts">清除筛选</a>
+</section>
 {% else %}
 <section class="rounded-xl border border-dashed border-slate-700 bg-slate-900/40 p-8 text-center">
   <h2 class="text-lg font-semibold text-white">还没有草稿</h2>
-  <p class="mt-2 text-sm text-slate-400">从热点详情中选择“生成证据草稿”，生成后会显示在这里。</p>
-  <a class="action-button mt-5 inline-block" href="/">查看热点</a>
+  <p class="mt-2 text-sm text-slate-400">创建一篇空白草稿，或从热点详情生成带来源的证据草稿。</p>
+  <a class="action-button mt-5 inline-block" href="/drafts/new">新建草稿</a>
 </section>
 {% endif %}
 {% endblock %}

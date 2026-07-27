@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}新建草稿 · AI Radar{% endblock %}
+
+{% block content %}
+<a class="back-link" href="/drafts">← 返回草稿箱</a>
+<header class="mt-5 mb-7">
+  <p class="text-sm font-medium text-cyan-300">NEW DRAFT</p>
+  <h1 class="mt-2 text-3xl font-bold text-white">新建草稿</h1>
+  <p class="mt-2 text-slate-400">选择一个热点作为来源上下文，再开始撰写。</p>
+</header>
+
+{% if topics %}
+<form class="grid gap-6 lg:grid-cols-[1fr_19rem]" action="/drafts" method="post">
+  <section class="grid gap-5 rounded-xl border border-slate-800 bg-slate-900/60 p-5 sm:p-6">
+    <label><span class="form-label">关联热点</span><select class="field" name="topic_id" required>{% for topic in topics %}<option value="{{ topic.id }}">{{ topic.title }}</option>{% endfor %}</select></label>
+    <label><span class="form-label">草稿标题</span><input class="field" name="title" required maxlength="500" placeholder="输入草稿标题"></label>
+    <label><span class="form-label">Markdown 正文</span><textarea class="field min-h-80" name="content_markdown" required placeholder="从可核验事实开始写作…"></textarea></label>
+  </section>
+  <aside class="h-fit rounded-xl border border-slate-800 bg-slate-900/60 p-5">
+    <label><span class="form-label">写作模式</span><select class="field" name="mode">{% for mode in writing_modes %}<option value="{{ mode }}">{{ mode }}</option>{% endfor %}</select></label>
+    <label class="mt-5 block"><span class="form-label">配图提示词</span><textarea class="field min-h-28" name="image_prompt" placeholder="可稍后在编辑页补充"></textarea></label>
+    <button class="action-button mt-6 w-full" type="submit">创建并编辑</button>
+  </aside>
+</form>
+{% else %}
+<section class="rounded-xl border border-dashed border-slate-700 bg-slate-900/40 p-8 text-center">
+  <h2 class="text-lg font-semibold text-white">暂无可关联的热点</h2>
+  <p class="mt-2 text-sm text-slate-400">先采集并生成热点，再创建草稿。</p>
+  <a class="action-button mt-5 inline-block" href="/">前往热点页</a>
+</section>
+{% endif %}
+{% endblock %}

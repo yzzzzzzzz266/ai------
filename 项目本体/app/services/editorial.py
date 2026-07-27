@@ -10,6 +10,20 @@ SOURCE_LINK_PATTERN = re.compile(r"\[[^\]]+\]\([^\)]+\)")
 GENERIC_PHRASES = ("值得注意的是", "随着", "这个快速变化的时代", "未来可期", "总而言之", "不难发现")
 STRONG_CONCLUSION_WORDS = ("首次", "领先", "爆发", "颠覆", "重大", "必然", "唯一", "革命性")
 CONNECTORS = ("首先", "其次", "最后", "此外", "同时", "因此", "不过", "值得注意的是")
+TAG_RULES = (
+    ("ai", "#AI"),
+    ("人工智能", "#人工智能"),
+    ("agent", "#AI智能体"),
+    ("智能体", "#AI智能体"),
+    ("reasoning", "#推理"),
+    ("推理", "#推理"),
+    ("multimodal", "#多模态"),
+    ("多模态", "#多模态"),
+    ("open source", "#开源"),
+    ("开源", "#开源"),
+    ("paper", "#论文"),
+    ("论文", "#论文"),
+)
 
 
 @dataclass(frozen=True)
@@ -20,6 +34,18 @@ class EditorialReview:
     repeated_connectors: list[str]
     generic_sentences: list[str]
     strong_conclusions: list[str]
+
+
+def suggest_tags(title: str, content: str, mode: str) -> list[str]:
+    searchable = f"{title} {content}".casefold()
+    tags = [tag for keyword, tag in TAG_RULES if keyword in searchable]
+    if "创作者" in mode:
+        tags.append("#内容创作")
+    if "技术" in mode:
+        tags.append("#技术解读")
+    if not tags:
+        tags.append("#AI资讯")
+    return list(dict.fromkeys(tags))[:5]
 
 
 def _sentences(content: str) -> list[str]:

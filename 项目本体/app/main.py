@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import quote
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -16,7 +16,7 @@ from app.models import Draft, ResearchArtifact, SourceItem, Topic, TopicEvidence
 from app.services.collection import collect_sources, latest_collection_runs
 from app.services.creator import CONTENT_PLATFORMS, CreativeGenerationError, generate_creator_draft, generate_draft_image
 from app.services.drafts import EditorParameters, WRITING_MODES, get_draft_generator
-from app.services.editorial import REWRITE_MODES, review_content, rewrite_content
+from app.services.editorial import REWRITE_MODES, review_content, rewrite_content, suggest_tags
 from app.services.intelligence import TASK_LABELS, get_intelligence_provider, validate_selected_provider_access
 from app.services.dashboard import build_category_distribution
 from app.services.topics import aggregate_topics, build_topic_profile
@@ -148,13 +148,113 @@ def dashboard(request: Request, session: Session = Depends(get_session)) -> HTML
 
 
 @app.get("/drafts", response_class=HTMLResponse)
-def draft_list(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
-    drafts = session.scalars(
-        select(Draft)
-        .options(selectinload(Draft.topic))
-        .order_by(Draft.updated_at.desc())
+def draft_list(
+    request: Request,
+    q: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    sort: str = "updated_desc",
+    deleted: bool = False,
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
+    query = q.strip()
+    filter_error = ""
+    try:
+        start_date = date.fromisoformat(date_from) if date_from else None
+        end_date = date.fromisoformat(date_to) if date_to else None
+    except ValueError:
+        start_date = None
+        end_date = None
+        filter_error = "请输入有效的日期。"
+    if start_date and end_date and start_date > end_date:
+        filter_error = "更新开始日期不能晚于结束日期。"
+
+    selected_sort = sort if sort in {"updated_desc", "updated_asc", "created_desc"} else "updated_desc"
+    statement = select(Draft).join(Draft.topic).options(selectinload(Draft.topic))
+    if query:
+        pattern = f"%{query}%"
+        statement = statement.where(
+            or_(
+                Draft.title.ilike(pattern),
+                Draft.content_markdown.ilike(pattern),
+                Topic.title.ilike(pattern),
+            )
+        )
+    if not filter_error and start_date:
+        statement = statement.where(Draft.updated_at >= datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc))
+    if not filter_error and end_date:
+        statement = statement.where(Draft.updated_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc))
+
+    order_by = {
+        "updated_desc": Draft.updated_at.desc(),
+        "updated_asc": Draft.updated_at.asc(),
+        "created_desc": Draft.created_at.desc(),
+    }[selected_sort]
+    drafts = session.scalars(statement.order_by(order_by)).all()
+    return templates.TemplateResponse(
+        request,
+        "draft_list.html",
+        {
+            "drafts": drafts,
+            "q": query,
+            "date_from": date_from,
+            "date_to": date_to,
+            "sort": selected_sort,
+            "deleted": deleted,
+            "has_filters": bool(query or date_from or date_to),
+            "filter_error": filter_error,
+            "total_draft_count": session.scalar(select(func.count(Draft.id))) or 0,
+        },
+    )
+
+
+@app.get("/drafts/new", response_class=HTMLResponse)
+def new_draft_form(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
+    topics = session.scalars(
+        select(Topic).where(Topic.status == "active").order_by(Topic.latest_published_at.desc())
     ).all()
-    return templates.TemplateResponse(request, "draft_list.html", {"drafts": drafts})
+    return templates.TemplateResponse(
+        request,
+        "draft_create.html",
+        {"topics": topics, "writing_modes": WRITING_MODES},
+    )
+
+
+@app.post("/drafts")
+def create_manual_draft(
+    topic_id: int = Form(),
+    title: str = Form(),
+    content_markdown: str = Form(),
+    mode: str = Form("新闻快讯"),
+    image_prompt: str = Form(""),
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    topic = get_topic_or_404(session, topic_id)
+    if not title.strip() or not content_markdown.strip():
+        raise HTTPException(status_code=422, detail="标题和正文不能为空")
+    now = datetime.now(timezone.utc)
+    draft = Draft(
+        topic_id=topic.id,
+        mode=mode if mode in WRITING_MODES else WRITING_MODES[0],
+        title=title.strip(),
+        content_markdown=content_markdown.strip(),
+        image_prompt=image_prompt.strip(),
+        editor_params_json={"provider": "manual-create"},
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(draft)
+    session.commit()
+    return RedirectResponse(url=f"/drafts/{draft.id}/edit", status_code=303)
+
+
+@app.get("/drafts/{draft_id}", response_class=HTMLResponse)
+def draft_detail(draft_id: int, request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "draft_detail.html",
+        {"draft": get_draft_or_404(session, draft_id)},
+    )
 
 
 @app.post("/collection/run", response_class=HTMLResponse)
@@ -396,7 +496,12 @@ def edit_draft(draft_id: int, request: Request, session: Session = Depends(get_s
     return templates.TemplateResponse(
         request,
         "draft_edit.html",
-        {"draft": draft, "review": review_content(draft.content_markdown), "rewrite_modes": REWRITE_MODES},
+        {
+            "draft": draft,
+            "review": review_content(draft.content_markdown),
+            "rewrite_modes": REWRITE_MODES,
+            "tag_suggestions": suggest_tags(draft.title, draft.content_markdown, draft.mode),
+        },
     )
 
 
@@ -509,3 +614,11 @@ def export_draft(draft_id: int, session: Session = Depends(get_session)) -> Resp
         media_type="text/markdown; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
     )
+
+
+@app.post("/drafts/{draft_id}/delete")
+def delete_draft(draft_id: int, session: Session = Depends(get_session)) -> RedirectResponse:
+    draft = get_draft_or_404(session, draft_id)
+    session.delete(draft)
+    session.commit()
+    return RedirectResponse(url="/drafts?deleted=1", status_code=303)
