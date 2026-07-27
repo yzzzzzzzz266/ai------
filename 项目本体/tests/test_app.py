@@ -7,6 +7,7 @@ from app import main as main_module
 from app.database import SessionLocal
 from app.main import app
 from app.models import Draft, ResearchArtifact, SourceItem, Topic, TopicEvidence
+from app.services.creator import CreatorDraft
 
 
 def create_topic_fixture() -> tuple[int, int, int]:
@@ -75,6 +76,7 @@ def test_application_serves_health_check_and_dashboard() -> None:
     assert "intelligence_provider" in health_response.json()
     assert dashboard_response.status_code == 200
     assert "AI Radar" in dashboard_response.text
+    assert 'href="/drafts"' in dashboard_response.text
 
 
 def test_topic_draft_and_export_routes() -> None:
@@ -82,6 +84,7 @@ def test_topic_draft_and_export_routes() -> None:
     try:
         with TestClient(app) as client:
             detail_response = client.get(f"/topics/{topic_id}")
+            drafts_response = client.get("/drafts")
             save_response = client.post(
                 f"/drafts/{draft_id}",
                 data={"title": "已保存草稿", "content_markdown": "[来源](https://example.com)\n\nAI agent 摘要。", "mode": "编辑解读", "image_prompt": "AI 新闻插画"},
@@ -91,6 +94,8 @@ def test_topic_draft_and_export_routes() -> None:
             empty_response = client.get("/topics/fragment", params={"keyword": "不存在的关键词"})
 
         assert detail_response.status_code == 200
+        assert drafts_response.status_code == 200
+        assert f'/drafts/{draft_id}/edit' in drafts_response.text
         assert "AI 读新闻" in detail_response.text
         assert save_response.status_code == 200
         assert "草稿已保存" in save_response.text
@@ -142,5 +147,42 @@ def test_generation_editorial_and_ai_workspace_routes() -> None:
         assert workspace_response.status_code == 200
         assert analysis_response.status_code == 303
         assert read_response.status_code == 303
+    finally:
+        remove_topic_fixture(topic_id, source_id)
+
+
+def test_creator_workspace_generates_a_platform_draft_and_image_route(monkeypatch) -> None:
+    topic_id, source_id, draft_id = create_topic_fixture()
+    generated = CreatorDraft(
+        title="小红书 AI 草稿",
+        content_markdown="AI 内容草稿\n\n## 来源\n\n- https://example.com/source",
+        image_prompt="editorial AI illustration, no text",
+        provider_name="DeepSeek · test",
+    )
+    monkeypatch.setattr(main_module, "generate_creator_draft", lambda *_args: generated)
+    monkeypatch.setattr(main_module, "generate_draft_image", lambda *_args: ("refined prompt", "/static/generated/test.png", "DeepSeek · test"))
+    try:
+        with TestClient(app) as client:
+            workspace_response = client.get(f"/topics/{topic_id}/creator")
+            draft_response = client.post(
+                f"/topics/{topic_id}/creator",
+                data={"source_ids": str(source_id), "platform": "小红书", "instructions": "更口语化"},
+                follow_redirects=False,
+            )
+            image_response = client.post(
+                f"/drafts/{draft_id}/image",
+                data={"image_prompt": "AI illustration", "image_instruction": "竖版"},
+                follow_redirects=False,
+            )
+
+        assert workspace_response.status_code == 200
+        assert "选择来源" in workspace_response.text
+        assert "小红书" in workspace_response.text
+        assert draft_response.status_code == 303
+        assert image_response.status_code == 303
+        with SessionLocal() as session:
+            draft = session.get(Draft, draft_id)
+            assert draft is not None
+            assert draft.editor_params_json["image_url"] == "/static/generated/test.png"
     finally:
         remove_topic_fixture(topic_id, source_id)

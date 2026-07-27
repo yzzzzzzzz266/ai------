@@ -14,6 +14,7 @@ from app.config import PROJECT_DIR, get_settings
 from app.database import SessionLocal, get_session, initialize_database
 from app.models import Draft, ResearchArtifact, SourceItem, Topic, TopicEvidence
 from app.services.collection import collect_sources, latest_collection_runs
+from app.services.creator import CONTENT_PLATFORMS, CreativeGenerationError, generate_creator_draft, generate_draft_image
 from app.services.drafts import EditorParameters, WRITING_MODES, get_draft_generator
 from app.services.editorial import REWRITE_MODES, review_content, rewrite_content
 from app.services.intelligence import TASK_LABELS, get_intelligence_provider, validate_selected_provider_access
@@ -144,6 +145,16 @@ def dashboard(request: Request, session: Session = Depends(get_session)) -> HTML
             "hot_topic_lookback_days": settings.hot_topic_lookback_days,
         },
     )
+
+
+@app.get("/drafts", response_class=HTMLResponse)
+def draft_list(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
+    drafts = session.scalars(
+        select(Draft)
+        .options(selectinload(Draft.topic))
+        .order_by(Draft.updated_at.desc())
+    ).all()
+    return templates.TemplateResponse(request, "draft_list.html", {"drafts": drafts})
 
 
 @app.post("/collection/run", response_class=HTMLResponse)
@@ -341,6 +352,44 @@ def generate_draft(
     return RedirectResponse(url=f"/drafts/{draft.id}/edit", status_code=303)
 
 
+@app.get("/topics/{topic_id}/creator", response_class=HTMLResponse)
+def creator_workspace(topic_id: int, request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
+    topic = get_topic_or_404(session, topic_id)
+    items = [evidence.source_item for evidence in topic.evidences]
+    return templates.TemplateResponse(request, "creator_workspace.html", {"topic": topic, "items": items, "platforms": CONTENT_PLATFORMS})
+
+
+@app.post("/topics/{topic_id}/creator")
+def create_creator_draft(
+    topic_id: int,
+    source_ids: list[int] = Form([]),
+    platform: str = Form("通用"),
+    instructions: str = Form(""),
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    topic = get_topic_or_404(session, topic_id)
+    topic_items = {evidence.source_item.id: evidence.source_item for evidence in topic.evidences}
+    selected_items = [topic_items[item_id] for item_id in source_ids if item_id in topic_items]
+    try:
+        generated = generate_creator_draft(settings, selected_items, platform, instructions)
+    except CreativeGenerationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    now = datetime.now(timezone.utc)
+    draft = Draft(
+        topic_id=topic.id,
+        mode=f"创作工作台 · {platform if platform in CONTENT_PLATFORMS else '通用'}",
+        title=generated.title,
+        content_markdown=generated.content_markdown,
+        image_prompt=generated.image_prompt,
+        editor_params_json={"platform": platform, "instructions": instructions, "provider": generated.provider_name, "source_ids": source_ids},
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(draft)
+    session.commit()
+    return RedirectResponse(url=f"/drafts/{draft.id}/edit", status_code=303)
+
+
 @app.get("/drafts/{draft_id}/edit", response_class=HTMLResponse)
 def edit_draft(draft_id: int, request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
     draft = get_draft_or_404(session, draft_id)
@@ -349,6 +398,25 @@ def edit_draft(draft_id: int, request: Request, session: Session = Depends(get_s
         "draft_edit.html",
         {"draft": draft, "review": review_content(draft.content_markdown), "rewrite_modes": REWRITE_MODES},
     )
+
+
+@app.post("/drafts/{draft_id}/image")
+def create_draft_image(
+    draft_id: int,
+    image_prompt: str = Form(),
+    image_instruction: str = Form(""),
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    draft = get_draft_or_404(session, draft_id)
+    try:
+        final_prompt, image_url, provider_name = generate_draft_image(settings, image_prompt, image_instruction)
+    except CreativeGenerationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    draft.image_prompt = final_prompt
+    draft.editor_params_json = {**draft.editor_params_json, "image_url": image_url, "image_provider": settings.image_model, "image_prompt_provider": provider_name}
+    draft.updated_at = datetime.now(timezone.utc)
+    session.commit()
+    return RedirectResponse(url=f"/drafts/{draft.id}/edit", status_code=303)
 
 
 @app.get("/drafts/{draft_id}/review", response_class=HTMLResponse)
@@ -409,6 +477,7 @@ def save_draft(
     draft.mode = mode
     draft.image_prompt = image_prompt.strip()
     draft.editor_params_json = {
+        **draft.editor_params_json,
         "audience": audience,
         "writing_style": writing_style,
         "stance": stance,

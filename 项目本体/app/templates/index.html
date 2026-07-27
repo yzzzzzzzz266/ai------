@@ -41,7 +41,7 @@
 <section class="mt-10">
   <div class="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
     <div><h2 class="text-xl font-semibold text-white">前沿 AI 热点</h2><p class="mt-1 text-sm text-slate-400">只保留同时匹配 AI 与模型、推理、智能体、多模态、评测、开源或论文等前沿信号的公开来源。</p></div>
-    <div class="flex flex-wrap items-center gap-3"><span class="status-muted">公开数据源已接入</span><button class="secondary-button" type="button" hx-post="/topics/aggregate" hx-target="#collection-feedback" hx-swap="innerHTML" hx-indicator="#collection-indicator" hx-disabled-elt="this">生成热点</button><button class="action-button" type="button" hx-post="/collection/run" hx-target="#collection-feedback" hx-swap="innerHTML" hx-indicator="#collection-indicator" hx-disabled-elt="this">立即采集</button></div>
+    <div class="flex flex-wrap items-center gap-3"><span class="status-muted">公开数据源已接入</span><a class="secondary-button" href="/drafts">草稿箱</a><button class="secondary-button" type="button" hx-post="/topics/aggregate" hx-target="#collection-feedback" hx-swap="innerHTML" hx-indicator="#collection-indicator" hx-disabled-elt="this">生成热点</button><button class="action-button" type="button" hx-post="/collection/run" hx-target="#collection-feedback" hx-swap="innerHTML" hx-indicator="#collection-indicator" hx-disabled-elt="this">立即采集</button></div>
   </div>
   <form class="mb-4 rounded-xl border border-slate-800 bg-slate-900/60 p-4" hx-get="/topics/fragment" hx-target="#topic-list" hx-indicator="#filter-indicator">
     <label class="mb-2 block text-sm font-medium text-slate-200" for="keyword">关注关键词</label>

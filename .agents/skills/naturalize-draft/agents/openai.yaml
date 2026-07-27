@@ -1,0 +1,4 @@
+interface:
+  display_name: "Naturalize Draft"
+  short_description: "Make sourced drafts clearer and less formulaic."
+  default_prompt: "Use $naturalize-draft to revise this sourced draft for a natural editorial voice."

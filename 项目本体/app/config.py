@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     deepseek_api_key: str | None = None
     deepseek_model: str = "deepseek-v4-flash"
     deepseek_base_url: str = "https://api.deepseek.com"
+    image_api_key: str | None = None
+    image_base_url: str | None = None
+    image_model: str = "gpt-image-1"
+    image_size: str = "1536x1024"
     source_weight_arxiv: float = Field(default=1.4, ge=0)
     source_weight_github: float = Field(default=1.2, ge=0)
     source_weight_hacker_news: float = Field(default=0.85, ge=0)

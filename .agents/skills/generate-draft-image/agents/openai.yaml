@@ -1,0 +1,4 @@
+interface:
+  display_name: "Draft Image Generator"
+  short_description: "Generate draft artwork with the configured image API."
+  default_prompt: "Use $generate-draft-image to create and verify artwork for this draft."

@@ -8,7 +8,7 @@
         <p class="mt-2 max-w-3xl text-sm leading-6 text-slate-300"><span class="font-medium text-cyan-200">热点一句话：</span>{{ topic.summary }}</p>
         <p class="mt-3 text-xs text-slate-500">最近发布：{{ topic.latest_published_at.strftime('%Y-%m-%d %H:%M') }}</p>
       </div>
-      <div class="flex shrink-0 items-end gap-4 sm:flex-col sm:items-end"><div class="text-left sm:text-right"><p class="text-2xl font-bold text-cyan-300">{{ '%.1f' | format(topic.heat_score) }}</p><p class="text-xs text-slate-500">热度分</p></div><a class="secondary-button" href="/topics/{{ topic.id }}">查看详情</a></div>
+      <div class="flex shrink-0 items-end gap-3 sm:flex-col sm:items-end"><div class="text-left sm:text-right"><p class="text-2xl font-bold text-cyan-300">{{ '%.1f' | format(topic.heat_score) }}</p><p class="text-xs text-slate-500">热度分</p></div><a class="action-button" href="/topics/{{ topic.id }}/creator">创作草稿</a><a class="secondary-button" href="/topics/{{ topic.id }}">查看详情</a></div>
     </article>
     {% endfor %}
   {% else %}

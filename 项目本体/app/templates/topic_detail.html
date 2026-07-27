@@ -30,6 +30,6 @@
       {% endfor %}
     </div>
   </div>
-  <aside class="h-fit rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><h2 class="font-semibold text-white">AI 工作台</h2><p class="mt-2 text-sm leading-6 text-slate-400">生成资料包、提炼新闻主旨，或查看基于证据的事实、推断与未知部分。</p><div class="mt-5 space-y-3"><a class="action-button block text-center" href="/topics/{{ topic.id }}/ai-workspace">打开 AI 工作台</a><a class="secondary-button block text-center" href="/topics/{{ topic.id }}/drafts/generate">生成证据草稿</a>{% for draft in topic.drafts %}<a class="secondary-button block text-center" href="/drafts/{{ draft.id }}/edit">编辑「{{ draft.mode }}」草稿</a>{% endfor %}</div></aside>
+  <aside class="h-fit rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><h2 class="font-semibold text-white">AI 工作台</h2><p class="mt-2 text-sm leading-6 text-slate-400">选择来源，按平台文风生成可编辑内容，并把图像提示词交给生图服务。</p><div class="mt-5 space-y-3"><a class="action-button block text-center" href="/topics/{{ topic.id }}/creator">打开创作工作台</a><a class="secondary-button block text-center" href="/topics/{{ topic.id }}/ai-workspace">打开证据分析</a><a class="secondary-button block text-center" href="/topics/{{ topic.id }}/drafts/generate">生成证据草稿</a>{% for draft in topic.drafts %}<a class="secondary-button block text-center" href="/drafts/{{ draft.id }}/edit">编辑「{{ draft.mode }}」草稿</a>{% endfor %}</div></aside>
 </section>
 {% endblock %}
