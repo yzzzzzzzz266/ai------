@@ -6,6 +6,9 @@ import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
+
+import httpx
 
 from app.config import PROJECT_DIR, Settings
 from app.models import SourceItem
@@ -22,6 +25,9 @@ CONTENT_PLATFORMS = {
 
 class CreativeGenerationError(RuntimeError):
     pass
+
+
+MAX_GENERATED_IMAGE_BYTES = 20 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -91,7 +97,8 @@ def generate_creator_draft(settings: Settings, items: list[SourceItem], platform
     system_prompt = (
         "你是严谨的中文内容编辑和视觉提示词策划。只能使用用户给出的来源事实，不得补写未证实数据、引语或结论。"
         "输出严格 JSON，不要 Markdown 代码块，字段为 title、content_markdown、image_prompt。"
-        "content_markdown 必须包含“## 来源”小节，列出实际使用的来源链接；image_prompt 使用英文，详细描述构图、主体、光线、风格和负面限制，且禁止文字、logo、品牌标识。"
+        "content_markdown 必须包含“## 来源”小节，列出实际使用的来源链接；image_prompt 使用英文，采用简洁配图：一个明确主体、干净背景、最多三种辅助视觉元素。"
+        "避免拼贴、多面板界面、密集数据流和复杂叙事；禁止文字、logo、品牌标识。"
     )
     user_prompt = (
         f"发布平台：{selected_platform}\n平台写作要求：{CONTENT_PLATFORMS[selected_platform]}\n"
@@ -109,10 +116,46 @@ def _refine_image_prompt(settings: Settings, image_prompt: str, adjustment: str)
         return image_prompt.strip(), provider_name
     content, provider_name = _chat(
         settings,
-        "You are an image prompt editor. Return only one detailed English image-generation prompt. Keep it under 900 characters; never include text, logos, trademarks, or brand names.",
+        "You are an image prompt editor. Return only one concise English image-generation prompt, under 320 characters."
+        "Use one clear subject, a minimal background, and at most three supporting visual elements. Avoid collage layouts, busy dashboards, dense data streams, or multiple scenes."
+        "Never include text, logos, trademarks, or brand names.",
         f"Current prompt:\n{image_prompt}\n\nUser requested changes:\n{adjustment}",
     )
-    return content[:900].strip(), provider_name
+    return content[:320].strip(), provider_name
+
+
+def _download_image(image_url: str) -> bytes:
+    parsed_url = urlparse(image_url)
+    if parsed_url.scheme not in {"http", "https"}:
+        raise CreativeGenerationError("图像 API 返回了不支持的图片地址。")
+    try:
+        response = httpx.get(image_url, follow_redirects=True, timeout=30.0)
+        response.raise_for_status()
+    except httpx.HTTPError as error:
+        raise CreativeGenerationError(f"无法下载图像 API 返回的图片：{error}") from error
+    image_bytes = response.content
+    if not image_bytes or len(image_bytes) > MAX_GENERATED_IMAGE_BYTES:
+        raise CreativeGenerationError("图像 API 返回的图片为空或超过 20 MB。")
+    content_type = response.headers.get("content-type", "").lower()
+    if content_type and not content_type.startswith("image/"):
+        raise CreativeGenerationError("图像 API 返回的地址不是图片内容。")
+    return image_bytes
+
+
+def _image_bytes_from_response(image_data: object) -> bytes:
+    image_b64 = getattr(image_data, "b64_json", None)
+    if image_b64:
+        try:
+            image_bytes = base64.b64decode(image_b64, validate=True)
+        except (ValueError, TypeError) as error:
+            raise CreativeGenerationError("图像 API 返回的 Base64 图片数据无效。") from error
+        if not image_bytes or len(image_bytes) > MAX_GENERATED_IMAGE_BYTES:
+            raise CreativeGenerationError("图像 API 返回的图片为空或超过 20 MB。")
+        return image_bytes
+    image_url = getattr(image_data, "url", None)
+    if isinstance(image_url, str) and image_url.strip():
+        return _download_image(image_url.strip())
+    raise CreativeGenerationError("图像 API 未返回可保存的图片数据。")
 
 
 def generate_draft_image(settings: Settings, image_prompt: str, adjustment: str) -> tuple[str, str, str]:
@@ -129,9 +172,7 @@ def generate_draft_image(settings: Settings, image_prompt: str, adjustment: str)
     try:
         response = client.images.generate(model=settings.image_model, prompt=final_prompt, size=settings.image_size)
         image_data = response.data[0]
-        if not image_data.b64_json:
-            raise CreativeGenerationError("图像 API 未返回可保存的图片数据。")
-        image_bytes = base64.b64decode(image_data.b64_json)
+        image_bytes = _image_bytes_from_response(image_data)
     except CreativeGenerationError:
         raise
     except Exception as error:

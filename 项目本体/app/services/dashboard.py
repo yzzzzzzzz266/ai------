@@ -1,21 +1,83 @@
 from __future__ import annotations
 
+import json
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.config import Settings
 from app.models import SourceItem
+from app.services.creator import _chat
 from app.services.collection import is_ai_related
 from app.services.topics import TOPIC_RULES, _normalized_time, match_topic_rule
 
 
 def _source_preview(item: SourceItem) -> dict[str, str]:
+    localized = (item.raw_json or {}).get("dashboard_zh", {})
     return {
-        "title": item.title,
+        "title": localized.get("title", item.title),
         "url": item.url,
         "author": item.author or "来源未提供作者",
         "published_at": _normalized_time(item.published_at).strftime("%Y-%m-%d %H:%M UTC"),
-        "summary": " ".join(item.content.split())[:220] or "来源未提供可展示的摘要。",
+        "summary": localized.get("summary", " ".join(item.content.split())[:220] or "来源未提供可展示的摘要。"),
     }
+
+
+def _parse_translations(value: str) -> dict[int, dict[str, str]]:
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", value.strip(), flags=re.IGNORECASE)
+    try:
+        records = json.loads(cleaned)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(records, list):
+        return {}
+    translations: dict[int, dict[str, str]] = {}
+    for record in records:
+        if not isinstance(record, dict) or not isinstance(record.get("id"), int):
+            continue
+        title = record.get("title")
+        summary = record.get("summary")
+        if isinstance(title, str) and title.strip() and isinstance(summary, str) and summary.strip():
+            translations[record["id"]] = {"title": title.strip(), "summary": summary.strip()}
+    return translations
+
+
+def localize_dashboard_previews(items: list[SourceItem], settings: Settings) -> bool:
+    untranslated = [
+        item
+        for item in items
+        if not (item.raw_json or {}).get("dashboard_zh")
+        and (
+            not re.search(r"[\u4e00-\u9fff]", item.title)
+            or not re.search(r"[\u4e00-\u9fff]", item.content)
+        )
+    ]
+    if not untranslated:
+        return False
+
+    payload = [
+        {"id": item.id, "title": item.title, "summary": " ".join(item.content.split())[:220]}
+        for item in untranslated
+    ]
+    try:
+        content, _ = _chat(
+            settings,
+            "你是严谨的中英新闻翻译编辑。仅翻译给出的标题和简介，不得添加或删除事实、数据、专有名词或链接。"
+            "返回严格 JSON 数组，不要 Markdown。每项仅含 id、title、summary，id 必须与输入一致；title 和 summary 必须使用简体中文。",
+            "请翻译以下来源预览：\n" + json.dumps(payload, ensure_ascii=False),
+        )
+    except Exception:
+        return False
+
+    translations = _parse_translations(content)
+    changed = False
+    for item in untranslated:
+        translation = translations.get(item.id)
+        if not translation:
+            continue
+        item.raw_json = {**(item.raw_json or {}), "dashboard_zh": translation}
+        changed = True
+    return changed
 
 
 def build_category_distribution(

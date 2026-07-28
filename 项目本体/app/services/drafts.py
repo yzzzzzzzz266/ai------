@@ -122,7 +122,7 @@ class EvidenceTemplateGenerator:
         return GeneratedDraft(topic.title, content, self._image_prompt(topic), self.name)
 
     def _image_prompt(self, topic: Topic) -> str:
-        return f"中文 AI 科技资讯插画，主题为“{topic.title}”，抽象数据流与协作界面，专业克制，深蓝和暖橙配色，无文字，无品牌标识，横向构图"
+        return f"中文 AI 科技资讯插画，主题为“{topic.title}”，一个核心科技意象，留白背景，专业克制，蓝灰配色，无文字，无品牌标识，横向构图"
 
 
 def get_draft_generator() -> DraftGenerator:

@@ -39,3 +39,15 @@ def test_category_distribution_uses_recent_sources_and_groups_platforms() -> Non
     assert sum(category["percentage"] for category in active_categories) == 100.0
     agent_category = next(category for category in active_categories if category["source_count"] == 2)
     assert {platform["name"] for platform in agent_category["platforms"]} == {"GitHub", "arXiv"}
+
+
+def test_category_distribution_uses_cached_chinese_source_preview() -> None:
+    now = datetime.now(timezone.utc)
+    item = source_item("Agent release", "AI agent tool calling workflow", "GitHub", now)
+    item.raw_json = {"dashboard_zh": {"title": "智能体发布", "summary": "AI 智能体支持工具调用工作流。"}}
+
+    distribution = build_category_distribution([item], lookback_days=7, now=now)
+
+    preview = next(category for category in distribution if category["source_count"])["platforms"][0]["sources"][0]
+    assert preview["title"] == "智能体发布"
+    assert preview["summary"] == "AI 智能体支持工具调用工作流。"

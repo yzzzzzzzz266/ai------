@@ -1,6 +1,6 @@
 # 官方 RSS 源清单
 
-本清单中的 URL 已于 2026-07-26 通过 HTTP 200 和 XML 格式检测。将下列地址写入 `.env` 的 `RSS_URLS` 后，应用会在采集时只保留与 AI 前沿相关的条目；BBC、Fox 与综合新闻源中的非 AI 新闻会被现有过滤规则剔除。
+本清单中的 URL 已于 2026-07-28 通过 HTTP 200 和 XML 格式检测。将下列地址写入 `.env` 的 `RSS_URLS` 后，应用会在采集时只保留与 AI 前沿相关的条目；BBC、Fox 与综合新闻源中的非 AI 新闻会被现有过滤规则剔除。
 
 ## 已启用的官方来源
 
@@ -14,6 +14,9 @@
 - Microsoft Research：`https://www.microsoft.com/en-us/research/feed/`
 - NVIDIA Developer Blog：`https://developer.nvidia.com/blog/feed/`
 - Hugging Face Blog：`https://huggingface.co/blog/feed.xml`
+- AWS Machine Learning Blog：`https://aws.amazon.com/blogs/machine-learning/feed/`
+- Google Research Blog：`https://research.google/blog/rss/`
+- Together AI Blog：`https://www.together.ai/blog/rss.xml`
 
 ### 国际新闻
 
@@ -21,6 +24,8 @@
 - BBC World：`https://feeds.bbci.co.uk/news/world/rss.xml`
 - Fox News Tech：`https://moxie.foxnews.com/google-publisher/tech.xml`
 - Fox News Science：`https://moxie.foxnews.com/google-publisher/science.xml`
+- TechCrunch Artificial Intelligence：`https://techcrunch.com/category/artificial-intelligence/feed/`
+- MIT Technology Review Artificial Intelligence：`https://www.technologyreview.com/topic/artificial-intelligence/feed/`
 
 ### 中国新闻
 

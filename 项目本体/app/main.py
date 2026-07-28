@@ -18,7 +18,7 @@ from app.services.creator import CONTENT_PLATFORMS, CreativeGenerationError, gen
 from app.services.drafts import EditorParameters, WRITING_MODES, get_draft_generator
 from app.services.editorial import REWRITE_MODES, review_content, rewrite_content, suggest_tags
 from app.services.intelligence import TASK_LABELS, get_intelligence_provider, validate_selected_provider_access
-from app.services.dashboard import build_category_distribution
+from app.services.dashboard import build_category_distribution, localize_dashboard_previews
 from app.services.topics import aggregate_topics, build_topic_profile
 
 
@@ -124,6 +124,8 @@ def dashboard(request: Request, session: Session = Depends(get_session)) -> HTML
     chart_items = session.scalars(
         select(SourceItem).where(SourceItem.published_at >= chart_cutoff).order_by(SourceItem.published_at.desc())
     ).all()
+    if localize_dashboard_previews(chart_items, settings):
+        session.commit()
     category_distribution = build_category_distribution(
         chart_items,
         lookback_days=settings.hot_topic_lookback_days,
@@ -391,7 +393,7 @@ def create_draft(topic_id: int, session: Session = Depends(get_session)) -> Redi
         mode="新闻快讯",
         title=topic.title,
         content_markdown=f"# {topic.title}\n\n基于当前证据整理：\n",
-        image_prompt=f"中文 AI 科技资讯插画，主题：{topic.title}，简洁专业，无文字，横向构图",
+        image_prompt=f"中文 AI 科技资讯插画，主题：{topic.title}，一个核心科技意象，留白背景，简洁专业，无文字，横向构图",
         editor_params_json={"audience": "普通读者", "tone": "新闻"},
         created_at=now,
         updated_at=now,
