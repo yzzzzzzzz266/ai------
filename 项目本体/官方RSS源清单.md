@@ -2,6 +2,13 @@
 
 本清单中的 URL 已于 2026-07-28 通过 HTTP 200 和 XML 格式检测。将下列地址写入 `.env` 的 `RSS_URLS` 后，应用会在采集时只保留与 AI 前沿相关的条目；BBC、Fox 与综合新闻源中的非 AI 新闻会被现有过滤规则剔除。
 
+## 中文科技来源
+
+- IT之家：`ITHOME_RSS_URL=https://www.ithome.com/rss/`
+- 稀土掘金：`JUEJIN_API_URL=https://api.juejin.cn/recommend_api/v1/article/recommend_all_feed`
+
+这两个来源使用独立适配器，不需要放入 `RSS_URLS`；单个来源发生请求或解析失败时，不会阻断其他来源的采集。
+
 ## 已启用的官方来源
 
 ### AI 公司与研究机构

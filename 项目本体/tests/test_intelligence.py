@@ -7,7 +7,7 @@ from app.services.intelligence import DeepSeekIntelligence, LocalEvidenceIntelli
 
 
 def test_local_evidence_analysis_marks_data_sources_at_the_end() -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime(2026, 7, 23, tzinfo=timezone.utc)
     source = SourceItem(
         id=1,
         platform="测试公开来源",

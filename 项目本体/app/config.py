@@ -12,12 +12,15 @@ class Settings(BaseSettings):
     app_env: str = "development"
     database_url: str = "sqlite:///./data/ai_radar.db"
     rss_urls: str = ""
+    ithome_rss_url: str = "https://www.ithome.com/rss/"
+    juejin_api_url: str = "https://api.juejin.cn/recommend_api/v1/article/recommend_all_feed"
     github_token: str | None = None
     x_bearer_token: str | None = None
     comfyui_url: str | None = None
     collection_interval_minutes: int = 60
     scheduler_enabled: bool = True
     hot_topic_lookback_days: int = Field(default=7, ge=1, le=30)
+    data_retention_days: int = Field(default=7, ge=1)
     draft_generator_provider: str = "template"
     ai_provider: str = "auto"
     openai_api_key: str | None = None

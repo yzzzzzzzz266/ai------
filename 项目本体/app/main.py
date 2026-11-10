@@ -14,7 +14,7 @@ from app.config import PROJECT_DIR, get_settings
 from app.database import SessionLocal, get_session, initialize_database
 from app.models import Draft, ResearchArtifact, SourceItem, Topic, TopicEvidence
 from app.services.collection import collect_sources, latest_collection_runs
-from app.services.creator import CONTENT_PLATFORMS, CreativeGenerationError, generate_creator_draft, generate_draft_image
+from app.services.creator import CONTENT_PLATFORMS, CreativeGenerationError, generate_creator_draft, generate_draft_image, rewrite_creator_draft
 from app.services.drafts import EditorParameters, WRITING_MODES, get_draft_generator
 from app.services.editorial import REWRITE_MODES, review_content, rewrite_content, suggest_tags
 from app.services.intelligence import TASK_LABELS, get_intelligence_provider, validate_selected_provider_access
@@ -502,6 +502,7 @@ def edit_draft(draft_id: int, request: Request, session: Session = Depends(get_s
             "draft": draft,
             "review": review_content(draft.content_markdown),
             "rewrite_modes": REWRITE_MODES,
+            "content_platforms": CONTENT_PLATFORMS,
             "tag_suggestions": suggest_tags(draft.title, draft.content_markdown, draft.mode),
         },
     )
@@ -549,6 +550,46 @@ def rewrite_draft(
         raise HTTPException(status_code=422, detail=str(error)) from error
     draft.updated_at = datetime.now(timezone.utc)
     draft.editor_params_json = {**draft.editor_params_json, "last_rewrite_mode": rewrite_mode}
+    session.commit()
+    return RedirectResponse(url=f"/drafts/{draft.id}/edit", status_code=303)
+
+
+@app.post("/drafts/{draft_id}/ai-rewrite")
+def ai_rewrite_draft(
+    draft_id: int,
+    platform: str = Form("微信公众号"),
+    instructions: str = Form(""),
+    title: str = Form(""),
+    content_markdown: str = Form(""),
+    image_prompt: str = Form(""),
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    draft = get_draft_or_404(session, draft_id)
+    current_title = title.strip() or draft.title
+    current_content = content_markdown.strip() or draft.content_markdown
+    current_image_prompt = image_prompt.strip() or draft.image_prompt
+    try:
+        rewritten = rewrite_creator_draft(
+            settings,
+            title=current_title,
+            content_markdown=current_content,
+            image_prompt=current_image_prompt,
+            platform=platform,
+            instructions=instructions,
+            editor_parameters=draft.editor_params_json,
+        )
+    except CreativeGenerationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    draft.title = rewritten.title
+    draft.content_markdown = rewritten.content_markdown
+    draft.image_prompt = rewritten.image_prompt
+    draft.updated_at = datetime.now(timezone.utc)
+    draft.editor_params_json = {
+        **draft.editor_params_json,
+        "platform": platform if platform in CONTENT_PLATFORMS else "通用",
+        "last_ai_rewrite_instructions": instructions.strip(),
+        "last_ai_rewrite_provider": rewritten.provider_name,
+    }
     session.commit()
     return RedirectResponse(url=f"/drafts/{draft.id}/edit", status_code=303)
 

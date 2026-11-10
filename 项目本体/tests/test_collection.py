@@ -1,5 +1,5 @@
 import xml.etree.ElementTree as ElementTree
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from sqlalchemy import create_engine, func, select
@@ -7,9 +7,20 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
 from app.database import Base
-from app.models import CollectionRun, SourceItem
+from app.models import CollectionRun, ResearchArtifact, SourceItem, Topic, TopicEvidence
 from app.services import collection
-from app.services.collection import ArxivAdapter, RssAdapter, SourceItemPayload, build_adapters, collect_sources, is_ai_related, persist_items
+from app.services.collection import (
+    ArxivAdapter,
+    IthomeAdapter,
+    JuejinAdapter,
+    RssAdapter,
+    SourceItemPayload,
+    build_adapters,
+    collect_sources,
+    is_ai_related,
+    persist_items,
+    purge_expired_source_items,
+)
 
 
 def make_payload(title: str, url: str, external_id: str | None = None) -> SourceItemPayload:
@@ -92,6 +103,63 @@ def test_rss_adapter_skips_entries_without_a_parseable_publish_time() -> None:
     assert payload is None
 
 
+def test_ithome_adapter_labels_rss_items_with_its_platform() -> None:
+    xml = b"""<rss><channel><item><guid>123</guid><title>AI agent update</title><link>https://www.ithome.com/0/1/123.htm</link><description>AI model release</description><pubDate>Sat, 01 Aug 2026 10:00:00 +0000</pubDate></item></channel></rss>"""
+    response = httpx.Response(
+        200,
+        content=xml,
+        request=httpx.Request("GET", "https://www.ithome.com/rss/"),
+    )
+
+    class FakeClient:
+        def get(self, url: str) -> httpx.Response:
+            assert url == "https://www.ithome.com/rss/"
+            return response
+
+    items = IthomeAdapter("https://www.ithome.com/rss/").fetch(FakeClient())
+
+    assert [(item.platform, item.external_id) for item in items] == [("IT之家", "123")]
+
+
+def test_juejin_adapter_maps_public_recommendation_records() -> None:
+    response = httpx.Response(
+        200,
+        json={
+            "data": [
+                {
+                    "item_info": {
+                        "article_info": {
+                            "article_id": "article-1",
+                            "title": "AI agent workflow",
+                            "brief_content": "AI model release details",
+                            "ctime": "1785578400",
+                            "digg_count": 4,
+                            "comment_count": 2,
+                        },
+                        "author_user_info": {"user_name": "juejin-author"},
+                    }
+                }
+            ]
+        },
+        request=httpx.Request(
+            "POST",
+            "https://api.juejin.cn/recommend_api/v1/article/recommend_all_feed",
+        ),
+    )
+
+    class FakeClient:
+        def post(self, url: str, json: dict[str, int | str]) -> httpx.Response:
+            assert url == "https://api.juejin.cn/recommend_api/v1/article/recommend_all_feed"
+            assert json == {"id_type": 2, "sort_type": 200, "cursor": "0", "limit": 20}
+            return response
+
+    items = JuejinAdapter("https://api.juejin.cn/recommend_api/v1/article/recommend_all_feed").fetch(FakeClient())
+
+    assert [(item.platform, item.external_id, item.url) for item in items] == [
+        ("稀土掘金", "article-1", "https://juejin.cn/post/article-1")
+    ]
+
+
 def test_ai_keyword_matching_does_not_treat_aiib_or_capital_as_ai_api() -> None:
     item = SourceItemPayload(
         **{
@@ -118,6 +186,67 @@ def test_persist_items_skips_items_older_than_the_collection_window() -> None:
 
         assert stats.filtered_count == 1
         assert session.scalar(select(func.count(SourceItem.id))) == 0
+
+
+def test_purge_expired_source_items_deletes_old_data_and_its_references() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    now = datetime.now(timezone.utc)
+
+    with Session(engine) as session:
+        old_item = SourceItem(
+            platform="test",
+            external_id="old",
+            title="Old AI agent release",
+            content="",
+            url="https://example.com/old",
+            published_at=now - timedelta(days=7, seconds=1),
+            fetched_at=now,
+            metrics_json={},
+            language="en",
+            raw_json={},
+        )
+        retained_item = SourceItem(
+            platform="test",
+            external_id="retained",
+            title="Retained AI agent release",
+            content="",
+            url="https://example.com/retained",
+            published_at=now - timedelta(days=6),
+            fetched_at=now,
+            metrics_json={},
+            language="en",
+            raw_json={},
+        )
+        topic = Topic(
+            title="Test topic",
+            summary="",
+            latest_published_at=now,
+        )
+        session.add_all([old_item, retained_item, topic])
+        session.flush()
+        session.add(TopicEvidence(topic_id=topic.id, source_item_id=old_item.id))
+        session.add(
+            ResearchArtifact(
+                source_item_id=old_item.id,
+                kind="summary",
+                title="Old item analysis",
+                content_markdown="",
+                provider_name="test",
+                source_urls_json=[],
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.commit()
+
+        deleted_count = purge_expired_source_items(session, retention_days=7)
+
+        assert deleted_count == 1
+        assert session.scalar(select(func.count(SourceItem.id))) == 1
+        assert session.scalar(select(func.count(TopicEvidence.id))) == 0
+        assert session.scalar(select(func.count(ResearchArtifact.id))) == 0
+        assert session.get(Topic, topic.id) is not None
 
 
 def test_authority_source_adapters_are_enabled_only_when_configured() -> None:

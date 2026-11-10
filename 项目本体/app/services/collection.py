@@ -12,11 +12,11 @@ from email.utils import parsedate_to_datetime
 from typing import Any, Protocol
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
-from app.models import CollectionRun, SourceItem
+from app.models import CollectionRun, ResearchArtifact, SourceItem, TopicEvidence
 
 
 AI_KEYWORDS = (
@@ -35,6 +35,32 @@ AI_KEYWORDS = (
     "智能体",
     "多模态",
     "开源模型",
+    # 主流模型与公司名，确保发布/开源/评测类新闻命中 AI 侧条件
+    "deepseek",
+    "kimi",
+    "月之暗面",
+    "qwen",
+    "通义千问",
+    "豆包",
+    "doubao",
+    "即梦",
+    "可灵",
+    "minimax",
+    "智谱",
+    "glm",
+    "文心",
+    "讯飞",
+    "星火",
+    "阶跃",
+    "百川",
+    "claude",
+    "gemini",
+    "llama",
+    "grok",
+    "sora",
+    "midjourney",
+    "chatgpt",
+    "gpt",
 )
 FRONTIER_SIGNAL_KEYWORDS = (
     "model release",
@@ -57,6 +83,11 @@ FRONTIER_SIGNAL_KEYWORDS = (
     "开源",
     "论文",
     "接口",
+    # 中文发布类信号词
+    "发布",
+    "上线",
+    "新版本",
+    "升级",
 )
 REQUEST_TIMEOUT_SECONDS = 15.0
 USER_AGENT = "AI-Radar-MVP/0.2"
@@ -219,6 +250,17 @@ def persist_items(
 
     session.commit()
     return PersistStats(added_count, duplicate_count, filtered_count)
+
+
+def purge_expired_source_items(session: Session, retention_days: int = 7) -> int:
+    cutoff = utc_now() - timedelta(days=retention_days)
+    expired_item_ids = select(SourceItem.id).where(SourceItem.published_at < cutoff)
+
+    session.execute(delete(ResearchArtifact).where(ResearchArtifact.source_item_id.in_(expired_item_ids)))
+    session.execute(delete(TopicEvidence).where(TopicEvidence.source_item_id.in_(expired_item_ids)))
+    result = session.execute(delete(SourceItem).where(SourceItem.id.in_(expired_item_ids)))
+    session.commit()
+    return result.rowcount or 0
 
 
 class ArxivAdapter:
@@ -415,6 +457,54 @@ class RssAdapter:
         )
 
 
+class IthomeAdapter(RssAdapter):
+    name = "IT之家"
+
+    def __init__(self, feed_url: str) -> None:
+        super().__init__([feed_url])
+
+
+class JuejinAdapter:
+    name = "稀土掘金"
+
+    def __init__(self, api_url: str) -> None:
+        self.api_url = api_url
+
+    def fetch(self, client: httpx.Client) -> list[SourceItemPayload]:
+        response = client.post(
+            self.api_url,
+            json={"id_type": 2, "sort_type": 200, "cursor": "0", "limit": 20},
+        )
+        response.raise_for_status()
+        items: list[SourceItemPayload] = []
+        for record in response.json().get("data", []):
+            item = record.get("item_info") or {}
+            article = item.get("article_info") or {}
+            article_id = str(article.get("article_id") or item.get("article_id") or "")
+            title = strip_markup(str(article.get("title") or ""))
+            if not article_id or not title:
+                continue
+            content = strip_markup(str(article.get("brief_content") or ""))
+            items.append(
+                SourceItemPayload(
+                    platform=self.name,
+                    external_id=article_id,
+                    title=title,
+                    content=content,
+                    url=f"https://juejin.cn/post/{article_id}",
+                    author=strip_markup(str((item.get("author_user_info") or {}).get("user_name") or "")) or None,
+                    published_at=parse_unix_timestamp(article.get("ctime")),
+                    metrics_json={
+                        "likes": article.get("digg_count", 0),
+                        "comments": article.get("comment_count", 0),
+                    },
+                    language=detect_language(f"{title} {content}"),
+                    raw_json={"article_id": article_id, "source": "juejin-public-api"},
+                )
+            )
+        return items
+
+
 class XAdapter:
     name = "X"
 
@@ -529,6 +619,10 @@ def build_adapters(settings: Settings) -> list[SourceAdapter]:
     adapters: list[SourceAdapter] = [ArxivAdapter(), GitHubAdapter(settings.github_token), HackerNewsAdapter()]
     if feed_urls:
         adapters.append(RssAdapter(feed_urls))
+    if settings.ithome_rss_url:
+        adapters.append(IthomeAdapter(settings.ithome_rss_url))
+    if settings.juejin_api_url:
+        adapters.append(JuejinAdapter(settings.juejin_api_url))
     x_usernames = configured_values(settings.x_author_usernames)
     if settings.x_bearer_token and x_usernames:
         adapters.append(XAdapter(settings.x_bearer_token, x_usernames))
@@ -551,6 +645,7 @@ def collect_sources(session_factory: sessionmaker[Session], settings: Settings) 
                         adapter.fetch(client),
                         max_item_age_days=settings.hot_topic_lookback_days,
                     )
+                    purge_expired_source_items(session, settings.data_retention_days)
                     run.status = "success"
                     run.added_count = stats.added_count
                     run.duplicate_count = stats.duplicate_count

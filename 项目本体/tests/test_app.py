@@ -216,6 +216,48 @@ def test_generation_editorial_and_ai_workspace_routes() -> None:
         remove_topic_fixture(topic_id, source_id)
 
 
+def test_ai_rewrite_route_updates_the_existing_draft(monkeypatch) -> None:
+    topic_id, source_id, draft_id = create_topic_fixture()
+    captured: dict[str, object] = {}
+    rewritten = CreatorDraft(
+        title="AI 重写标题",
+        content_markdown="AI 重写正文\n\n[来源](https://example.com/source)",
+        image_prompt="revised editorial image",
+        provider_name="DeepSeek · test",
+    )
+    monkeypatch.setattr(
+        main_module,
+        "rewrite_creator_draft",
+        lambda *_args, **kwargs: (captured.update(kwargs) or rewritten),
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                f"/drafts/{draft_id}/ai-rewrite",
+                data={
+                    "platform": "微信公众号",
+                    "instructions": "强调技术细节",
+                    "title": "未保存的新标题",
+                    "content_markdown": "未保存的新正文 [来源](https://example.com/source)",
+                    "image_prompt": "current image prompt",
+                },
+                follow_redirects=False,
+            )
+
+        assert response.status_code == 303
+        with SessionLocal() as session:
+            draft = session.get(Draft, draft_id)
+            assert draft is not None
+            assert draft.title == rewritten.title
+            assert draft.content_markdown == rewritten.content_markdown
+            assert draft.image_prompt == rewritten.image_prompt
+            assert draft.editor_params_json["last_ai_rewrite_provider"] == rewritten.provider_name
+            assert captured["title"] == "未保存的新标题"
+            assert captured["content_markdown"] == "未保存的新正文 [来源](https://example.com/source)"
+    finally:
+        remove_topic_fixture(topic_id, source_id)
+
+
 def test_creator_workspace_generates_a_platform_draft_and_image_route(monkeypatch) -> None:
     topic_id, source_id, draft_id = create_topic_fixture()
     generated = CreatorDraft(
